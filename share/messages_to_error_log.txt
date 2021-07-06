@@ -11262,6 +11262,55 @@ ER_IB_WRN_FAILED_TO_ACQUIRE_SERVICE
 ER_IB_WRN_OLD_GEOMETRY_TYPE
   eng "Column %s of type GEOMETRY is in old (5.6) format which could be deprecated in the future. To change the format to latest, please consider rebuilding the table after the upgrade."
 
+ER_HANDLERTON_CREATE_TABLE
+  eng "innobase_create_handler: handlerton called. Required. Mandatory"
+
+ER_HANDLERTON_CLOSE_CONN
+  eng "innobase_close_connection: handlerton called. Required"
+
+ER_HANDLERTON_KILL_CONN
+  eng "innobase_kill_connection: handlerton called. Not Required"
+
+ER_HANDLERTON_SAVEPT_SET
+  eng "innobase_savepoint: handlerton called. Required"
+
+ER_HANDLERTON_SAVEPT_ROLLBACK
+  eng "innobase_rollback_to_savepoint: handlerton called. Required"
+
+ER_HANDLERTON_SAVEPT_RELEASE
+  eng "innobase_release_savepoint: handlerton called. Required"
+
+ER_HANDLERTON_COMMIT
+  eng "innobase_commit: handlerton called. Required"
+
+ER_HANDLERTON_ROLLBACK
+  eng "innobase_rollback: handlerton called. Required"
+
+ER_HANDLERTON_PREPARE
+  eng "innobase_xa_prepare: handlerton called. Required"
+
+ER_HANDLERTON_RECOVER
+  eng "innobase_xa_recover: handlerton called. Required"
+
+ER_HANDLERTON_COMMIT_XID
+  eng "commit_by_xid: handlerton called. Required"
+
+ER_HANDLERTON_ROLLBACK_XID
+  eng "innobase_rollback_by_xid: handlerton called. Required"
+
+ER_HANDLERTON_PANIC
+  eng "innodb_shutdown: handlerton called. Required"
+
+ER_HANDLERTON_START_SNAP
+  eng "innobase_start_trx_and_assign_read_view: handlerton called. Required"
+
+ER_HANDLERTON_FLUSH_LOGS
+  eng "innobase_flush_logs: handlerton called. Required"
+
+ER_HANDLERTON_SHOW_STATUS
+  eng "innobase_show_status: handlerton called. Required"
+
+
 # DO NOT add server-to-client messages here;
 # they go in messages_to_clients.txt
 # in the same directory as this file.

@@ -1394,6 +1394,8 @@ static void innodb_space_shutdown() {
 static int innodb_shutdown(handlerton *, ha_panic_function) {
   DBUG_TRACE;
 
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_PANIC);
+
   if (innodb_inited) {
     innodb_inited = false;
     hash_table_free(innobase_open_tables);
@@ -1557,6 +1559,7 @@ static int innobase_commit_concurrency_validate(
 @param[in]	mem_root	memory context */
 static handler *innobase_create_handler(handlerton *hton, TABLE_SHARE *table,
                                         bool partitioned, MEM_ROOT *mem_root) {
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_CREATE_TABLE);
   if (partitioned) {
     ha_innopart *file = new (mem_root) ha_innopart(hton, table);
     if (file && file->init_partitioning(mem_root)) {
@@ -5355,6 +5358,8 @@ static bool innobase_flush_logs(handlerton *hton, bool binlog_group_flush) {
   DBUG_TRACE;
   assert(hton == innodb_hton_ptr);
 
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_FLUSH_LOGS);
+
   if (srv_read_only_mode) {
     return false;
   }
@@ -5418,6 +5423,8 @@ static int innobase_start_trx_and_assign_read_view(
   DBUG_TRACE;
   assert(hton == innodb_hton_ptr);
 
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_START_SNAP);
+
   /* Create a new trx struct for thd, if it does not yet have one */
 
   trx_t *trx = check_trx_exists(thd);
@@ -5471,6 +5478,9 @@ static int innobase_commit(handlerton *hton, /*!< in: InnoDB handlerton */
   assert(hton == innodb_hton_ptr);
   DBUG_PRINT("trans", ("ending transaction"));
   DEBUG_SYNC_C("transaction_commit_start");
+
+  LogErr(ERROR_LEVEL, ER_MYSQLBACKUP_MSG, thd->query().str);
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_COMMIT);
 
   trx_t *trx = check_trx_exists(thd);
 
@@ -5629,6 +5639,8 @@ static int innobase_rollback(handlerton *hton, /*!< in: InnoDB handlerton */
   assert(hton == innodb_hton_ptr);
   DBUG_PRINT("trans", ("aborting transaction"));
 
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_ROLLBACK);
+
   trx_t *trx = check_trx_exists(thd);
 
   TrxInInnoDB trx_in_innodb(trx);
@@ -5721,6 +5733,8 @@ static int innobase_rollback_to_savepoint(
   DBUG_TRACE;
   assert(hton == innodb_hton_ptr);
 
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_SAVEPT_ROLLBACK);
+
   trx_t *trx = check_trx_exists(thd);
 
   TrxInInnoDB trx_in_innodb(trx);
@@ -5786,6 +5800,8 @@ static int innobase_release_savepoint(
   trx_t *trx;
   char name[64];
 
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_SAVEPT_RELEASE);
+
   DBUG_TRACE;
   assert(hton == innodb_hton_ptr);
 
@@ -5815,6 +5831,8 @@ static int innobase_savepoint(
 {
   DBUG_TRACE;
   assert(hton == innodb_hton_ptr);
+
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_SAVEPT_SET);
 
   /* In the autocommit mode there is no sense to set a savepoint
   (unless we are in sub-statement), so SQL layer ensures that
@@ -5852,6 +5870,8 @@ static int innobase_close_connection(
 {
   DBUG_TRACE;
   assert(hton == innodb_hton_ptr);
+
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_CLOSE_CONN);
 
   trx_t *trx = thd_to_trx(thd);
   bool free_trx = false;
@@ -5932,6 +5952,8 @@ static void innobase_kill_connection(
 {
   DBUG_TRACE;
   assert(hton == innodb_hton_ptr);
+
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_KILL_CONN);
 
   trx_t *trx = thd_to_trx(thd);
 
@@ -18810,6 +18832,10 @@ static bool innobase_show_status(handlerton *hton, THD *thd,
                                  stat_print_fn *stat_print,
                                  enum ha_stat_type stat_type) {
   assert(hton == innodb_hton_ptr);
+  
+
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_SHOW_STATUS);
+
 
   switch (stat_type) {
     case HA_ENGINE_STATUS:
@@ -19486,6 +19512,8 @@ static int innobase_xa_prepare(handlerton *hton, /*!< in: InnoDB handlerton */
 
   assert(hton == innodb_hton_ptr);
 
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_PREPARE);
+
   thd_get_xid(thd, (MYSQL_XID *)trx->xid);
 
   innobase_srv_conc_force_exit_innodb(trx);
@@ -19565,6 +19593,8 @@ static int innobase_xa_recover(
 {
   assert(hton == innodb_hton_ptr);
 
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_RECOVER);
+
   if (len == 0 || txn_list == nullptr) {
     return (0);
   }
@@ -19579,6 +19609,8 @@ static xa_status_code innobase_commit_by_xid(
     handlerton *hton, XID *xid) /*!< in: X/Open XA transaction identification */
 {
   assert(hton == innodb_hton_ptr);
+
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_COMMIT_XID);
 
   trx_t *trx = trx_get_trx_by_xid(xid);
 
@@ -19607,6 +19639,8 @@ static xa_status_code innobase_rollback_by_xid(
                       identification */
 {
   assert(hton == innodb_hton_ptr);
+
+  LogErr(INFORMATION_LEVEL, ER_HANDLERTON_ROLLBACK_XID);
 
   trx_t *trx = trx_get_trx_by_xid(xid);
 
