@@ -11263,7 +11263,7 @@ ER_IB_WRN_OLD_GEOMETRY_TYPE
   eng "Column %s of type GEOMETRY is in old (5.6) format which could be deprecated in the future. To change the format to latest, please consider rebuilding the table after the upgrade."
 
 ER_HANDLERTON_CREATE_TABLE
-  eng "innobase_create_handler: handlerton called. Required. Mandatory"
+  eng "innobase_create_handler: handlerton called. Required. Mandatory. Table: %s"
 
 ER_HANDLERTON_CLOSE_CONN
   eng "innobase_close_connection: handlerton called. Required"
@@ -11281,7 +11281,7 @@ ER_HANDLERTON_SAVEPT_RELEASE
   eng "innobase_release_savepoint: handlerton called. Required"
 
 ER_HANDLERTON_COMMIT
-  eng "innobase_commit: handlerton called. Required"
+  eng "innobase_commit: handlerton called. Required. Query: %s"
 
 ER_HANDLERTON_ROLLBACK
   eng "innobase_rollback: handlerton called. Required"
