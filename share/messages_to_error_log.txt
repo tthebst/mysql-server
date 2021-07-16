@@ -11310,6 +11310,9 @@ ER_HANDLERTON_FLUSH_LOGS
 ER_HANDLERTON_SHOW_STATUS
   eng "innobase_show_status: handlerton called. Required"
 
+ER_HANDLERTON_API_CALL
+  eng "innobase: API Called. Required %s"
+
 
 # DO NOT add server-to-client messages here;
 # they go in messages_to_clients.txt
