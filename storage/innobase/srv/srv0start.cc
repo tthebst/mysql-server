@@ -568,7 +568,7 @@ static MY_ATTRIBUTE((warn_unused_result)) dberr_t
   // map file
   file->map_addr =
       mmap(NULL, srv_log_file_size_requested, PROT_READ | PROT_WRITE,
-           MAP_SHARED, static_cast<int>(file->m_file), 0);
+           MAP_PRIVATE, static_cast<int>(file->m_file), 0);
   DBUG_PRINT("ib_log do_redo_io:",
              ("mmaping in open_log_file  name: %s addr: %p fd: %d", name,
               file->map_addr, file->m_file));

@@ -7752,8 +7752,10 @@ dberr_t Fil_shard::do_redo_io(const IORequest &type, const page_id_t &page_id,
     // read from mmap file
     if (page_id.space() == dict_sys_t::s_log_space_first_id) {
       memcpy(buf,static_cast<unsigned char *>(file->map_addr) + offset,len);
+      // DBUG_PRINT("ib_log do_redo_io", ("read from dram log"));
     } else {
       err = os_file_read(req_type, file->name, file->handle, buf, offset, len);
+      // DBUG_PRINT("ib_log do_redo_io", ("read from file"));
     }
 
   } else {
@@ -7763,8 +7765,9 @@ dberr_t Fil_shard::do_redo_io(const IORequest &type, const page_id_t &page_id,
     if (page_id.space() == dict_sys_t::s_log_space_first_id) {
       memcpy(static_cast<unsigned char *>(file->map_addr) + offset, buf, len);
 
-      // ONLY NEEEDED WHEN WANT TO SYNC WITH ON DISK FILE
-      // int errsync = msync(static_cast<unsigned char *>(file->map_addr),
+      //
+      // ONLY NEEEDED WHEN WANT TO SYNC WITH ON DISK
+      // FILE int errsync = msync(static_cast<unsigned char *>(file->map_addr),
       //                     srv_log_file_size_requested, MS_SYNC);
       // DBUG_PRINT("ib_log do_redo_io",
       //            ("msync %d %s args: %p %lu", errsync, strerror(errno),
@@ -8365,7 +8368,8 @@ void Fil_shard::redo_space_flush() {
     ++fil_n_log_flushes;
     ++fil_n_pending_log_flushes;
 
-    bool skip_flush = false;
+    // this prevents flushing and returns will keep stats correct
+    bool skip_flush = true;
 
     /* Wait for some other thread that is flushing. */
     while (file.n_pending_flushes > 0 && !skip_flush) {
