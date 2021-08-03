@@ -298,16 +298,16 @@ static MY_ATTRIBUTE((warn_unused_result)) dberr_t
   }
 
   // map log file
-  int *is_pmem;
+  int is_pmem = 0;
   file->map_addr = pmem_map_file(name, srv_log_file_size_requested,
-                                 PMEM_FILE_CREATE, 0, NULL, is_pmem);
+                                 PMEM_FILE_CREATE, 0, NULL, &is_pmem);
 
   DBUG_PRINT(
       "ib_log do_redo_io:",
       ("mmaping in create_log_file  name: %s addr: %p fd: %d ispmeme: %d", name,
        file->map_addr, file->m_file, is_pmem));
   ut_a(file->map_addr != NULL);
-  ut_a(is_pmem != 0);
+  // ut_a(*is_pmem != 0);
 
   auto size = srv_log_file_size >> 20;
 
@@ -568,15 +568,13 @@ static MY_ATTRIBUTE((warn_unused_result)) dberr_t
   // file->map_addr =
   //     mmap(NULL, srv_log_file_size_requested, PROT_READ | PROT_WRITE,
   //          MAP_PRIVATE, static_cast<int>(file->m_file), 0);
-  int is_pmem;
-  file->map_addr =
-      pmem_map_file(name, srv_log_file_size_requested, 0, 0, NULL, &is_pmem);
-  ut_a(file->map_addr != NULL);
-  ut_a(is_pmem != 0);
-
+  int is_pmem = 0;
+  file->map_addr = pmem_map_file(name, srv_log_file_size_requested,
+                                 PMEM_FILE_CREATE, 0, NULL, &is_pmem);
   DBUG_PRINT("ib_log do_redo_io:",
-             ("mmaping in open_log_file  name: %s addr: %p fd: %d", name,
-              file->map_addr, file->m_file));
+             ("mmaping in open_log_file  name: %s addr: %p fd: %d ispmeme: %d",
+              name, file->map_addr, file->m_file, is_pmem));
+  ut_a(file->map_addr != NULL);
 
   ret = os_file_close(*file);
   ut_a(ret);
