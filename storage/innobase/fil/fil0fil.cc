@@ -61,6 +61,7 @@ The tablespace memory cache */
 #include "srv0start.h"
 
 #ifndef UNIV_HOTBACKUP
+#include <libpmem.h>
 #include "buf0lru.h"
 #include "ibuf0ibuf.h"
 #include "os0event.h"
@@ -7751,7 +7752,8 @@ dberr_t Fil_shard::do_redo_io(const IORequest &type, const page_id_t &page_id,
 
     // read from mmap file
     if (page_id.space() == dict_sys_t::s_log_space_first_id) {
-      memcpy(buf,static_cast<unsigned char *>(file->map_addr) + offset,len);
+      pmem_memcpy_persist(
+          buf, static_cast<unsigned char *>(file->map_addr) + offset, len);
       // DBUG_PRINT("ib_log do_redo_io", ("read from dram log"));
     } else {
       err = os_file_read(req_type, file->name, file->handle, buf, offset, len);
@@ -7763,7 +7765,8 @@ dberr_t Fil_shard::do_redo_io(const IORequest &type, const page_id_t &page_id,
     // writing to redo log tablespace
     // next step read/write also to mmap file
     if (page_id.space() == dict_sys_t::s_log_space_first_id) {
-      memcpy(static_cast<unsigned char *>(file->map_addr) + offset, buf, len);
+      pmem_memcpy_persist(static_cast<unsigned char *>(file->map_addr) + offset,
+                          buf, len);
 
       //
       // ONLY NEEEDED WHEN WANT TO SYNC WITH ON DISK

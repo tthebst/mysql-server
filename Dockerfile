@@ -50,6 +50,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libnuma-dev \
     libncurses5-dev \
     libncursesw5-dev \
+    # PMEM libariesy
+    libpmem1 librpmem1 libpmemblk1 libpmemlog1 libpmemobj1 libpmempool1 \
     perl \
     # install "xz-utils" for .sql.xz docker-entrypoint-initdb.d files
     xz-utils \
@@ -81,12 +83,14 @@ RUN mkdir /usr/local/mysql \
 RUN apt-get update \
     && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
-    && rm -rf /var/lib/mysql && mkdir -p /var/lib/mysql /var/run/mysqld \
-    && chown -R mysql:mysql /var/lib/mysql /var/run/mysqld \
+    && rm -rf /var/lib/mysql && rm -rf /var/lib/redo && mkdir -p /var/lib/mysql /var/run/mysqld /var/lib/redo  \
+    && chown -R mysql:mysql /var/lib/mysql /var/run/mysqld /var/lib/redo \
     # ensure that /var/run/mysqld (used for socket and lock files) is writable regardless of the UID our mysqld instance ends up having at runtime
-    && chmod 1777 /var/run/mysqld /var/lib/mysql
+    && chmod 1777 /var/run/mysqld /var/lib/mysql /var/lib/redo
 
 VOLUME /var/lib/mysql
+VOLUME /var/lib/redo
+
 
 # Config files
 COPY config/ /etc/mysql/

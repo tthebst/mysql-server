@@ -46,6 +46,7 @@ this program; if not, write to the Free Software Foundation, Inc.,
  *************************************************************************/
 
 #include <errno.h>
+#include <libpmem.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -297,18 +298,16 @@ static MY_ATTRIBUTE((warn_unused_result)) dberr_t
   }
 
   // map log file
-  file->map_addr =
-      mmap(NULL, srv_log_file_size_requested, PROT_READ | PROT_WRITE,
-           MAP_SHARED, static_cast<int>(file->m_file), 0);
+  int *is_pmem;
+  file->map_addr = pmem_map_file(name, srv_log_file_size_requested,
+                                 PMEM_FILE_CREATE, 0, NULL, is_pmem);
 
-  DBUG_PRINT("ib_log do_redo_io:",
-             ("mmaping in create_log_file  name: %s addr: %p fd: %d", name,
-              file->map_addr, file->m_file));
-
-  if (file->map_addr == MAP_FAILED) {
-    DBUG_PRINT("ib_log do_redo_io:", ("mmaping FAILED!!!!!!!"));
-    return (DB_ERROR);
-  }
+  DBUG_PRINT(
+      "ib_log do_redo_io:",
+      ("mmaping in create_log_file  name: %s addr: %p fd: %d ispmeme: %d", name,
+       file->map_addr, file->m_file, is_pmem));
+  ut_a(file->map_addr != NULL);
+  ut_a(is_pmem != 0);
 
   auto size = srv_log_file_size >> 20;
 
@@ -566,16 +565,18 @@ static MY_ATTRIBUTE((warn_unused_result)) dberr_t
   *size = os_file_get_size(*file);
 
   // map file
+  // file->map_addr =
+  //     mmap(NULL, srv_log_file_size_requested, PROT_READ | PROT_WRITE,
+  //          MAP_PRIVATE, static_cast<int>(file->m_file), 0);
+  int is_pmem;
   file->map_addr =
-      mmap(NULL, srv_log_file_size_requested, PROT_READ | PROT_WRITE,
-           MAP_PRIVATE, static_cast<int>(file->m_file), 0);
+      pmem_map_file(name, srv_log_file_size_requested, 0, 0, NULL, &is_pmem);
+  ut_a(file->map_addr != NULL);
+  ut_a(is_pmem != 0);
+
   DBUG_PRINT("ib_log do_redo_io:",
              ("mmaping in open_log_file  name: %s addr: %p fd: %d", name,
               file->map_addr, file->m_file));
-  if (file->map_addr == MAP_FAILED) {
-    DBUG_PRINT("ib_log do_redo_io:", ("mmaping FAILED!!!!!!!"));
-    return (DB_ERROR);
-  }
 
   ret = os_file_close(*file);
   ut_a(ret);

@@ -180,10 +180,12 @@ docker_create_db_directories() {
 	# TODO other directories that are used by default? like /var/lib/mysql-files
 	# see https://github.com/docker-library/mysql/issues/562
 	mkdir -p "$DATADIR"
+	mkdir -p "$LOGDIR"
 
 	if [ "$user" = "0" ]; then
 		# this will cause less disk access than `chown -R`
 		find "$DATADIR" \! -user mysql -exec chown mysql '{}' +
+		find "$LOGDIR" \! -user mysql -exec chown mysql '{}' +
 	fi
 }
 
@@ -210,8 +212,9 @@ docker_init_database_dir() {
 # This should be called after mysql_check_config, but before any other functions
 docker_setup_env() {
 	# Get config
-	declare -g DATADIR SOCKET
+	declare -g DATADIR SOCKET LOGDIR
 	DATADIR="$(mysql_get_config 'datadir' "$@")"
+	LOGDIR="/var/lib/redp"
 	SOCKET="$(mysql_get_config 'socket' "$@")"
 
 	# Initialize values that might be stored in a file

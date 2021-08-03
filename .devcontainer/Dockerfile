@@ -6,4 +6,5 @@ RUN wget -O boost_1_73_0.tar.gz https://boostorg.jfrog.io/artifactory/main/relea
 
 #Add Bison
 RUN apt-get update \
-    && apt-get install -y bison libncurses5-dev libncursesw5-dev libssl-dev perl
+    && apt-get install -y bison libncurses5-dev libncursesw5-dev libssl-dev perl 
+    && libpmem-dev librpmem-dev libpmemblk-dev libpmemlog-dev libpmemobj-dev libpmempool-dev libpmempool-dev
