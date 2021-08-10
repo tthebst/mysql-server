@@ -5841,6 +5841,8 @@ sub clean_datadir {
     }
   }
 
+  clean_dir("/var/lib/redo");
+
   # Remove all files in tmp and var/tmp
   clean_dir("$opt_vardir/tmp");
   if ($opt_tmpdir ne "$opt_vardir/tmp") {

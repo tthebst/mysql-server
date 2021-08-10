@@ -68,4 +68,21 @@ In `/out` run
 cd /out/mysql-test
 ./mysql-test-run.pl --force --suite=binlog
 
+./mysql-test-run.pl --defaults-extra-file=/mnt/local2/tim/my-pmem.cnf --force --suite=innodb
+./mysql-test-run.pl --defaults-extra-file=/mnt/local2/tim/my-pmem.cnf --force --suite=innodb_gis
+./mysql-test-run.pl --defaults-extra-file=/mnt/local2/tim/my-pmem.cnf --force --suite=innodb_undo
+./mysql-test-run.pl --defaults-extra-file=/mnt/local2/tim/my-pmem.cnf --force --suite=innodb_zip
 ```
+
+With docker
+
+```
+docker run -v /mnt/local2/tim/my-pmem.cnf:/etc/mysql/my.cnf -v /mnt/pmem1/redo:/var/lib/redo --cap-add=sys_nice -e MYSQL_TMP_DIR=/var/lib/redo  -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_USER=mysql -d  -e MYSQL_PASSWORD=secret --name mysql8-testsuite tthebst/mysql-pmem-debug /bin/su -m -c "export MYSQL_TMP_DIR=/var/lib/redo && cd /usr/local/mysql/mysql-test && ./mysql-test-run.pl --big-test --mysqld=--innodb-log-group-home-dir=/var/lib/redo --force --suite=innodb,innodb_gis,innodb_undo,innodb_zip" -m mysql
+
+specific
+
+docker run -v /mnt/local2/tim/my-pmem.cnf:/etc/mysql/my.cnf -v /mnt/pmem1/redo:/var/lib/redo --cap-add=sys_nice -e MYSQL_TMP_DIR=/var/lib/redo  -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_USER=mysql -e MYSQL_PASSWORD=secret --name mysql8-testsuite tthebst/mysql-pmem-debug /bin/su -m -c "export MYSQL_TMP_DIR=/var/lib/redo && cd /usr/local/mysql/mysql-test && ./mysql-test-run.pl --big-test --mysqld=--innodb-log-group-home-dir=/var/lib/redo --force innodb.innodb_buffer_pool_load" -m mysql
+
+```
+
+innodb.innodb_buffer_pool_load
