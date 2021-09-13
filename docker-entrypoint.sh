@@ -406,7 +406,7 @@ _main() {
 		fi
 	fi
 	echo $@
-	exec -c "numactl --cpunodebind=1 --membind=1 -- $@"
+	exec -c "$@"
 }
 
 # If we are sourced from elsewhere, don't perform any further actions
