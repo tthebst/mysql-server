@@ -284,6 +284,33 @@ static long innobase_open_files;
 static long innobase_autoinc_lock_mode;
 static ulong innobase_commit_concurrency = 0;
 
+/* API / HANDLORTONS counters */
+
+long api_call_close = 0;
+long api_call_write_row = 0;
+long api_call_update_row = 0;
+long api_call_delete_row = 0;
+long api_call_index_init = 0;
+long api_call_index_end = 0;
+long api_call_index_read = 0;
+long api_call_index_read_last = 0;
+long api_call_index_next = 0;
+long api_call_index_prev = 0;
+long api_call_index_first = 0;
+long api_call_index_last = 0;
+long api_call_rnd_init = 0;
+long api_call_rnd_next = 0;
+long api_call_rnd_pos = 0;
+long api_call_position = 0;
+long api_call_create = 0;
+long api_call_delete_table = 0;
+long api_call_records_in_range = 0;
+long api_call_info = 0;
+long api_call_extra = 0;
+long api_call_start_stmt = 0;
+long api_call_store_lock = 0;
+long api_call_external_lock = 0;
+
 /* Boolean @@innodb_buffer_pool_in_core_file. */
 bool srv_buffer_pool_in_core_file = TRUE;
 
@@ -6778,8 +6805,6 @@ void ha_innobase::innobase_initialize_autoinc() {
   ulonglong auto_inc;
   const Field *field = table->found_next_number_field;
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "open");
-
   if (field != nullptr) {
     auto_inc = field->get_max_int_value();
 
@@ -7398,7 +7423,10 @@ uint ha_innobase::max_supported_key_part_length(
 int ha_innobase::close() {
   DBUG_TRACE;
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "close");
+  if (api_call_close % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "close", api_call_close);
+  }
+  api_call_close++;
 
   if (m_prebuilt->m_temp_read_shared) {
     temp_prebuilt_vec *vec = m_prebuilt->table->temp_prebuilt;
@@ -8728,7 +8756,11 @@ int ha_innobase::write_row(uchar *record) /*!< in: a row in MySQL format */
   int error_result = 0;
   bool auto_inc_used = false;
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "write_row");
+  if (api_call_write_row % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "write_row",
+           api_call_write_row);
+  }
+  api_call_write_row++;
 
   DBUG_TRACE;
 
@@ -9463,7 +9495,11 @@ if its index columns are updated!
 int ha_innobase::update_row(const uchar *old_row, uchar *new_row) {
   int err;
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "update_row");
+  if (api_call_update_row % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "update_row",
+           api_call_update_row);
+  }
+  api_call_update_row++;
 
   dberr_t error;
   trx_t *trx = thd_to_trx(m_user_thd);
@@ -9627,7 +9663,11 @@ int ha_innobase::delete_row(
   trx_t *trx = thd_to_trx(m_user_thd);
   TrxInInnoDB trx_in_innodb(trx);
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "delete_row");
+  if (api_call_delete_row % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "delete_row",
+           api_call_delete_row);
+  }
+  api_call_delete_row++;
 
   DBUG_TRACE;
 
@@ -9764,8 +9804,11 @@ int ha_innobase::index_init(uint keynr,  /*!< in: key (index) number */
 {
   DBUG_TRACE;
 
-    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_init");
-
+  if (api_call_index_init % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_init",
+           api_call_index_init);
+  }
+  api_call_index_init++;
 
   return change_active_index(keynr);
 }
@@ -9776,8 +9819,11 @@ int ha_innobase::index_init(uint keynr,  /*!< in: key (index) number */
 int ha_innobase::index_end(void) {
   DBUG_TRACE;
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_end");
-
+  if (api_call_index_end % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_end",
+           api_call_index_end);
+  }
+  api_call_index_end++;
 
   if (m_prebuilt->index->last_sel_cur) {
     m_prebuilt->index->last_sel_cur->release();
@@ -9901,7 +9947,11 @@ int ha_innobase::index_read(
 {
   DBUG_TRACE;
 
-    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_read");
+  if (api_call_index_read % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_read",
+           api_call_index_read);
+  }
+  api_call_index_read++;
 
   DEBUG_SYNC_C("ha_innobase_index_read_begin");
 
@@ -10071,7 +10121,11 @@ int ha_innobase::index_read_last(
     uint key_len)         /*!< in: length of the key val or prefix
                           in bytes */
 {
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_read_last");
+  if (api_call_index_read_last % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_read_last",
+           api_call_index_read_last);
+  }
+  api_call_index_read_last++;
   return (index_read(buf, key_ptr, key_len, HA_READ_PREFIX_LAST));
 }
 
@@ -10309,8 +10363,11 @@ int ha_innobase::general_fetch(
 int ha_innobase::index_next(uchar *buf) /*!< in/out: buffer for next row in
                                         MySQL format */
 {
-
-    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_next");
+  if (api_call_index_next % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_next",
+           api_call_index_next);
+  }
+  api_call_index_next++;
 
   ha_statistic_increment(&System_status_var::ha_read_next_count);
 
@@ -10336,7 +10393,11 @@ int ha_innobase::index_next_same(uchar *buf, /*!< in/out: buffer for the row */
 int ha_innobase::index_prev(
     uchar *buf) /*!< in/out: buffer for previous row in MySQL format */
 {
-    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_prev");
+  if (api_call_index_prev % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_prev",
+           api_call_index_prev);
+  }
+  api_call_index_prev++;
 
   ha_statistic_increment(&System_status_var::ha_read_prev_count);
 
@@ -10351,8 +10412,11 @@ int ha_innobase::index_first(uchar *buf) /*!< in/out: buffer for the row */
 {
   DBUG_TRACE;
 
-    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_first");
-
+  if (api_call_index_first % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_first",
+           api_call_index_first);
+  }
+  api_call_index_first++;
 
   ha_statistic_increment(&System_status_var::ha_read_first_count);
 
@@ -10375,8 +10439,11 @@ int ha_innobase::index_last(uchar *buf) /*!< in/out: buffer for the row */
 {
   DBUG_TRACE;
 
-    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_last");
-
+  if (api_call_index_read_last % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "index_last",
+           api_call_index_last);
+  }
+  api_call_index_last++;
 
   ha_statistic_increment(&System_status_var::ha_read_last_count);
 
@@ -10497,7 +10564,10 @@ int ha_innobase::read_range_next() {
 int ha_innobase::rnd_init(bool scan) {
   DBUG_TRACE;
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "rnd_init");
+  if (api_call_rnd_init % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "rnd_init", api_call_rnd_init);
+  }
+  api_call_rnd_init++;
   assert(table_share->is_missing_primary_key() ==
          m_prebuilt->clust_index_was_generated);
 
@@ -10528,7 +10598,10 @@ int ha_innobase::rnd_next(uchar *buf) /*!< in/out: returns the row in this
 {
   int error;
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "rnd_next");
+  if (api_call_rnd_next % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "rnd_next", api_call_rnd_next);
+  }
+  api_call_rnd_next++;
 
   DBUG_TRACE;
 
@@ -10562,7 +10635,10 @@ int ha_innobase::rnd_pos(
   DBUG_TRACE;
   DBUG_DUMP("key", pos, ref_length);
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "rnd_pos");
+  if (api_call_rnd_pos % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "rnd_pos", api_call_rnd_pos);
+  }
+  api_call_rnd_pos++;
 
   ha_statistic_increment(&System_status_var::ha_read_rnd_count);
 
@@ -10942,7 +11018,10 @@ was positioned the last time.
 @param[in]	record	row in MySQL format */
 void ha_innobase::position(const uchar *record) {
   uint len;
-LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "position");
+  if (api_call_position % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "position", api_call_position);
+  }
+  api_call_position++;
   DBUG_TRACE;
   assert(m_prebuilt->trx == thd_to_trx(ha_thd()));
   assert(table_share->is_missing_primary_key() ==
@@ -14690,7 +14769,10 @@ int ha_innobase::create(const char *name, TABLE *form,
                         HA_CREATE_INFO *create_info, dd::Table *table_def) {
   THD *thd = ha_thd();
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "create");
+  if (api_call_create % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "create", api_call_create);
+  }
+  api_call_create++;
 
   if (thd_sql_command(thd) == SQLCOM_TRUNCATE) {
     return (truncate_impl(name, form, table_def));
@@ -14906,7 +14988,11 @@ be dropped
 @return	error number
 @retval 0 on success */
 int ha_innobase::delete_table(const char *name, const dd::Table *table_def) {
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "delete_table");
+  if (api_call_delete_table % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "delete_table",
+           api_call_delete_table);
+  }
+  api_call_delete_table++;
 
   if (table_def != nullptr &&
       dict_sys_t::is_dd_table_id(table_def->se_private_id())) {
@@ -16291,7 +16377,11 @@ ha_rows ha_innobase::records_in_range(
 
   DBUG_TRACE;
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "records_in_range");
+  if (api_call_records_in_range % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "records_in_range",
+           api_call_records_in_range);
+  }
+  api_call_records_in_range++;
 
   ut_a(m_prebuilt->trx == thd_to_trx(ha_thd()));
 
@@ -17098,7 +17188,10 @@ func_exit:
 
 int ha_innobase::info(uint flag) /*!< in: what information is requested */
 {
-    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "info");
+  if (api_call_info % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "info", api_call_info);
+  }
+  api_call_info++;
 
   return (info_low(flag, false /* not ANALYZE */));
 }
@@ -17916,9 +18009,11 @@ int ha_innobase::check(THD *thd,                /*!< in: user thread handle */
 
 int ha_innobase::extra(enum ha_extra_function operation)
 /*!< in: HA_EXTRA_FLUSH or some other flag */
-{ 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "extra");
-
+{
+  if (api_call_extra % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "extra", api_call_extra);
+  }
+  api_call_extra++;
 
   if (m_prebuilt->table) {
 #ifdef UNIV_DEBUG
@@ -18053,7 +18148,11 @@ int ha_innobase::start_stmt(THD *thd, thr_lock_type lock_type) {
 
   DBUG_TRACE;
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "start_stmt");
+  if (api_call_start_stmt % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "start_stmt",
+           api_call_start_stmt);
+  }
+  api_call_start_stmt++;
 
   update_thd(thd);
 
@@ -18184,7 +18283,11 @@ int ha_innobase::external_lock(THD *thd, /*!< in: handle to the user thread */
 {
   DBUG_TRACE;
   DBUG_PRINT("enter", ("lock_type: %d", lock_type));
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "external_lock");
+  if (api_call_external_lock % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "external_lock",
+           api_call_external_lock);
+  }
+  api_call_external_lock++;
 
   update_thd(thd);
 
@@ -19026,7 +19129,11 @@ THR_LOCK_DATA **ha_innobase::store_lock(
 
   trx_t *trx = check_trx_exists(thd);
 
-  LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "store_lock");
+  if (api_call_store_lock % 1000 == 0) {
+    LogErr(SYSTEM_LEVEL, ER_HANDLERTON_API_CALL, "store_lock",
+           api_call_store_lock);
+  }
+  api_call_store_lock++;
 
   TrxInInnoDB trx_in_innodb(trx);
 
