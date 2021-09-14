@@ -11311,7 +11311,7 @@ ER_HANDLERTON_SHOW_STATUS
   eng "innobase_show_status: handlerton called. Required"
 
 ER_HANDLERTON_API_CALL
-  eng "innobase: API Called. Required %s"
+  eng "innobase: API Called. Required %s num calls: %ld"
 
 
 # DO NOT add server-to-client messages here;
