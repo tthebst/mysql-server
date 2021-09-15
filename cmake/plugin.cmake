@@ -150,6 +150,15 @@ MACRO(MYSQL_ADD_PLUGIN plugin_arg)
     SET (MYSQLD_STATIC_PLUGIN_LIBS ${MYSQLD_STATIC_PLUGIN_LIBS} 
       ${target} ${ARG_LINK_LIBRARIES} CACHE INTERNAL "" FORCE)
 
+
+    #add KVDK
+    IF(${target} STREQUAL "kvpmem")
+      MESSAGE("TEST: ADDDDDDIN KVPMEM " ${target})
+      FIND_LIBRARY(KVDKLIB NAMES libengine.so HINTS ${CMAKE_SOURCE_DIR}/storage/kvpmem/lib/)
+      target_link_libraries(${target} PUBLIC ${KVDKLIB})
+      target_include_directories(${target} PUBLIC ${CMAKE_SOURCE_DIR}/storage/kvpmem/include/kvdk)
+    ENDIF()
+
     IF(ARG_MANDATORY)
       SET(${with_var} ON CACHE INTERNAL
         "Link ${plugin} statically to the server" FORCE)

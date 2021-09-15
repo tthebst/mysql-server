@@ -1,5 +1,5 @@
 #changed from debian to ubuntu
-FROM debian:buster-slim
+FROM debian:bullseye-slim
 
 # add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added
 RUN groupadd -r mysql && useradd -r -g mysql mysql
@@ -51,6 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libncurses5-dev \
     numactl \
     libncursesw5-dev \
+    libpmem1 librpmem1 libpmemblk1 libpmemlog1 libpmemobj1 libpmempool1 \
     perl \
     # install "xz-utils" for .sql.xz docker-entrypoint-initdb.d files
     xz-utils \
@@ -80,7 +81,7 @@ RUN mkdir /usr/local/mysql \
 # the "/var/lib/mysql" stuff here is because the mysql-server postinst doesn't have an explicit way to disable the mysql_install_db codepath besides having a database already "configured" (ie, stuff in /var/lib/mysql/mysql)
 # also, we set debconf keys to make APT a little quieter
 RUN apt-get update \
-    && apt-get install -y \
+    && apt-get install -y libhwloc-dev libpmem-dev librpmem-dev libpmemblk-dev libpmemlog-dev libpmemobj-dev libpmempool-dev libpmempool-dev\
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /var/lib/mysql && mkdir -p /var/lib/mysql /var/run/mysqld \
     && chown -R mysql:mysql /var/lib/mysql /var/run/mysqld \
@@ -93,13 +94,23 @@ VOLUME /var/lib/mysql
 COPY config/ /etc/mysql/
 COPY config/my.cnf /etc/mysql/my.cnf
 COPY docker-entrypoint.sh /usr/local/bin/
+# copy KVDK engine file
+
+COPY ./storage/kvpmem/lib/libengine.so /usr/lib/
+
+ENV PATH="${PATH}:/usr/local/mysql/bin"
+
+RUN ls -lah /usr/lib/libengine.so
+
 RUN ln -s usr/local/bin/docker-entrypoint.sh /entrypoint.sh # backwards compat
 # make script executubale 
 RUN chmod 777 /usr/local/bin/docker-entrypoint.sh \
     && ln -s /usr/local/bin/docker-entrypoint.sh /
 
+ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" skipcache
+RUN which mysqld
 
-ENV PATH="${PATH}:/usr/local/mysql/bin"
+ENV PATH="/usr/local/mysql/bin/:${PATH}"
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 

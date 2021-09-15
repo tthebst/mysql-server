@@ -94,8 +94,10 @@
 
 #include "storage/kvpmem/ha_kvpmem.h"
 
+#include "engine.hpp"
 #include "my_dbug.h"
 #include "mysql/plugin.h"
+#include "namespace.hpp"
 #include "sql/sql_class.h"
 #include "sql/sql_plugin.h"
 #include "typelib.h"
@@ -104,6 +106,7 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
                                        bool partitioned, MEM_ROOT *mem_root);
 
 handlerton *kvpmem_hton;
+kvdk::Engine *engine = nullptr;
 
 /* Interface to mysqld, to check system tables supported by SE */
 static bool kvpmem_is_supported_system_table(const char *db,
@@ -155,7 +158,35 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
 }
 
 ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
-    : handler(hton, table_arg) {}
+    : handler(hton, table_arg) {
+  kvdk::Status status;
+  // first time using the engine. Create a handler
+  if (engine == nullptr) {
+    kvdk::Configs engine_configs;
+    {
+      // Configure for a tiny KVDK instance.
+      // Approximately 10MB /mnt/pmem0/ space is needed.
+      // Please refer to "Configuration" section in user documentation for
+      // details.
+      engine_configs.pmem_file_size = (1ull << 22);
+      engine_configs.pmem_segment_blocks = (1ull << 8);
+      engine_configs.hash_bucket_num = (1ull << 10);
+    }
+    // The KVDK instance is mounted as a directory
+    // /mnt/pmem0/tutorial_kvdk_example.
+    // Modify this path if necessary.
+    std::string engine_path{"/pmem/tutorial_kvdk_example"};
+
+    // Purge old KVDK instance
+    system(std::string{"rm -rf " + engine_path + "\n"}.c_str());
+
+    status = kvdk::Engine::Open(engine_path, &engine, engine_configs, stdout);
+    assert(status == kvdk::Status::Ok);
+    DBUG_PRINT("KVDK", ("Successfully created KVDK engine"));
+  }
+
+  // Initialize a KVDK instance.
+}
 
 /*
   List of all system tables specific to the SE.

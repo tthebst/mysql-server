@@ -1726,7 +1726,8 @@ void substitute_progpath(char **argv) {
       break;
     }
     if (colonend == spend) {
-      assert(false);
+      // causes issues in DEBUG mode?!
+      // assert(false);
       break;
     }
   }  // while (true)
