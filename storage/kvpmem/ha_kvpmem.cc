@@ -94,10 +94,9 @@
 
 #include "storage/kvpmem/ha_kvpmem.h"
 
-#include "engine.hpp"
+#include <libpmemkv.hpp>
 #include "my_dbug.h"
 #include "mysql/plugin.h"
-#include "namespace.hpp"
 #include "sql/sql_class.h"
 #include "sql/sql_plugin.h"
 #include "typelib.h"
@@ -106,7 +105,7 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
                                        bool partitioned, MEM_ROOT *mem_root);
 
 handlerton *kvpmem_hton;
-kvdk::Engine *engine = nullptr;
+pmem::kv::db *kv = nullptr;
 
 /* Interface to mysqld, to check system tables supported by SE */
 static bool kvpmem_is_supported_system_table(const char *db,
@@ -157,32 +156,52 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
   return new (mem_root) ha_kvpmem(hton, table);
 }
 
+//! [custom-comparator]
+class lexicographical_comparator {
+ public:
+  int compare(pmem::kv::string_view k1, pmem::kv::string_view k2) {
+    if (k1.compare(k2) == 0)
+      return 0;
+    else if (std::lexicographical_compare(k1.data(), k1.data() + k1.size(),
+                                          k2.data(), k2.data() + k2.size()))
+      return -1;
+    else
+      return 1;
+  }
+
+  std::string name() { return "lexicographical_comparator"; }
+};
+
 ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
     : handler(hton, table_arg) {
-  kvdk::Status status;
   // first time using the engine. Create a handler
-  if (engine == nullptr) {
-    kvdk::Configs engine_configs;
-    {
-      // Configure for a tiny KVDK instance.
-      // Approximately 10MB /mnt/pmem0/ space is needed.
-      // Please refer to "Configuration" section in user documentation for
-      // details.
-      engine_configs.pmem_file_size = (1ull << 22);
-      engine_configs.pmem_segment_blocks = (1ull << 8);
-      engine_configs.hash_bucket_num = (1ull << 10);
-    }
-    // The KVDK instance is mounted as a directory
-    // /mnt/pmem0/tutorial_kvdk_example.
-    // Modify this path if necessary.
-    std::string engine_path{"/pmem/tutorial_kvdk_example"};
+  if (kv == nullptr) {
+    pmem::kv::config cfg;
 
-    // Purge old KVDK instance
-    system(std::string{"rm -rf " + engine_path + "\n"}.c_str());
+    /* Instead of expecting already created database pool, we could simply
+     * set 'create_if_missing' flag in the config, to provide a pool if needed.
+     */
+    pmem::kv::status s = cfg.put_path("/pmem/pmemkv");
+    assert(s == pmem::kv::status::OK);
 
-    status = kvdk::Engine::Open(engine_path, &engine, engine_configs, stdout);
-    assert(status == kvdk::Status::Ok);
-    DBUG_PRINT("KVDK", ("Successfully created KVDK engine"));
+    s = cfg.put_create_or_error_if_exists(true);
+    assert(s == pmem::kv::status::OK);
+    s = cfg.put_size(1024UL * 1024UL * 1024UL);
+    assert(s == pmem::kv::status::OK);
+    s = cfg.put_create_if_missing(true);
+    assert(s == pmem::kv::status::OK);
+    s = cfg.put_comparator(lexicographical_comparator{});
+    assert(s == pmem::kv::status::OK);
+
+    kv = new pmem::kv::db();
+    assert(kv != nullptr);
+    s = kv->open("csmap", std::move(cfg));
+    DBUG_PRINT("KVDK", ("Successfully created pmemkv engine %d", s));
+    assert(s == pmem::kv::status::OK);
+
+    s = kv->put("key1", "value1");
+    assert(s == pmem::kv::status::OK);
+    DBUG_PRINT("KVDK", ("Successfully created pmemkv engine"));
   }
 
   // Initialize a KVDK instance.
@@ -249,6 +268,7 @@ static bool kvpmem_is_supported_system_table(const char *db,
 int ha_kvpmem::open(const char *, int, uint, const dd::Table *) {
   DBUG_TRACE;
 
+  assert(kv != nullptr);
   if (!(share = get_share())) return 1;
   thr_lock_data_init(&share->lock, &lock, nullptr);
 
@@ -482,10 +502,9 @@ int ha_kvpmem::rnd_end() {
   sql_update.cc
 */
 int ha_kvpmem::rnd_next(uchar *) {
-  int rc;
   DBUG_TRACE;
-  rc = HA_ERR_END_OF_FILE;
-  return rc;
+
+  return 0;
 }
 
 /**
@@ -572,6 +591,7 @@ int ha_kvpmem::rnd_pos(uchar *, uchar *) {
 */
 int ha_kvpmem::info(uint) {
   DBUG_TRACE;
+  if (stats.records < 2) stats.records = 2;
   return 0;
 }
 
@@ -768,27 +788,14 @@ static MYSQL_THDVAR_UINT(create_count_thdvar, 0, nullptr, nullptr, nullptr, 0,
   ha_create_table() in handle.cc
 */
 
-int ha_kvpmem::create(const char *name, TABLE *, HA_CREATE_INFO *,
-                       dd::Table *) {
+int ha_kvpmem::create(const char *, TABLE *, HA_CREATE_INFO *, dd::Table *) {
   DBUG_TRACE;
   /*
     This is not implemented but we want someone to be able to see that it
     works.
   */
 
-  /*
-    It's just an kvpmem of THDVAR_SET() usage below.
-  */
-  THD *thd = ha_thd();
-  char *buf = (char *)my_malloc(PSI_NOT_INSTRUMENTED, SHOW_VAR_FUNC_BUFF_SIZE,
-                                MYF(MY_FAE));
-  snprintf(buf, SHOW_VAR_FUNC_BUFF_SIZE, "Last creation '%s'", name);
-  THDVAR_SET(thd, last_create_thdvar, buf);
-  my_free(buf);
-
-  uint count = THDVAR(thd, create_count_thdvar) + 1;
-  THDVAR_SET(thd, create_count_thdvar, &count);
-
+  // maybe register ins system collection?
   return 0;
 }
 

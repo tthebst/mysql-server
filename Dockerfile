@@ -1,10 +1,10 @@
 #changed from debian to ubuntu
-FROM debian:bullseye-slim
+FROM debian:bookworm
 
 # add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added
 RUN groupadd -r mysql && useradd -r -g mysql mysql
 
-RUN apt-get update && apt-get install -y --no-install-recommends gnupg dirmngr && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt update  && apt-get install -y --no-install-recommends gnupg dirmngr && rm -rf /var/lib/apt/lists/*
 
 # add gosu for easy step-down from root
 # https://github.com/tianon/gosu/releases
@@ -61,6 +61,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV MYSQL_MAJOR 8.0
 ENV MYSQL_VERSION 8.0.25-1debian10
 
+
+# the "/var/lib/mysql" stuff here is because the mysql-server postinst doesn't have an explicit way to disable the mysql_install_db codepath besides having a database already "configured" (ie, stuff in /var/lib/mysql/mysql)
+# also, we set debconf keys to make APT a little quieter
+RUN apt-get update \
+    && apt-get install -y git libtbb-dev rapidjson-dev  libpmemobj-cpp-dev build-essential cmake libhwloc-dev libpmem-dev librpmem-dev libpmemblk-dev libpmemlog-dev libpmemobj-dev libpmempool-dev libpmempool-dev\
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /var/lib/mysql && mkdir -p /var/lib/mysql /var/run/mysqld \
+    && chown -R mysql:mysql /var/lib/mysql /var/run/mysqld \
+    # ensure that /var/run/mysqld (used for socket and lock files) is writable regardless of the UID our mysqld instance ends up having at runtime
+    && chmod 1777 /var/run/mysqld /var/lib/mysql
+
+
+# install memkind
+RUN cd / \
+    && git clone https://github.com/memkind/memkind \
+    && cd memkind \
+    && ./autogen.sh \
+    && ./configure --prefix=/usr \
+    && make -j$(nproc)  \
+    && make install
+
+
 # bust cache
 ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" skipcache
 # Copy package from build
@@ -78,15 +100,6 @@ RUN mkdir /usr/local/mysql \
 
 
 
-# the "/var/lib/mysql" stuff here is because the mysql-server postinst doesn't have an explicit way to disable the mysql_install_db codepath besides having a database already "configured" (ie, stuff in /var/lib/mysql/mysql)
-# also, we set debconf keys to make APT a little quieter
-RUN apt-get update \
-    && apt-get install -y libhwloc-dev libpmem-dev librpmem-dev libpmemblk-dev libpmemlog-dev libpmemobj-dev libpmempool-dev libpmempool-dev\
-    && rm -rf /var/lib/apt/lists/* \
-    && rm -rf /var/lib/mysql && mkdir -p /var/lib/mysql /var/run/mysqld \
-    && chown -R mysql:mysql /var/lib/mysql /var/run/mysqld \
-    # ensure that /var/run/mysqld (used for socket and lock files) is writable regardless of the UID our mysqld instance ends up having at runtime
-    && chmod 1777 /var/run/mysqld /var/lib/mysql
 
 VOLUME /var/lib/mysql
 
@@ -94,13 +107,13 @@ VOLUME /var/lib/mysql
 COPY config/ /etc/mysql/
 COPY config/my.cnf /etc/mysql/my.cnf
 COPY docker-entrypoint.sh /usr/local/bin/
-# copy KVDK engine file
 
-COPY ./storage/kvpmem/lib/libengine.so /usr/lib/
+# copy KVDK engine file
+COPY ./storage/kvpmem/extra/pmemkv/ /workspace/storage/kvpmem/extra/pmemkv
+RUN ls /workspace/storage/kvpmem/extra/pmemkv
+RUN cd /workspace/storage/kvpmem/extra/pmemkv/build && make install && cd /
 
 ENV PATH="${PATH}:/usr/local/mysql/bin"
-
-RUN ls -lah /usr/lib/libengine.so
 
 RUN ln -s usr/local/bin/docker-entrypoint.sh /entrypoint.sh # backwards compat
 # make script executubale 
