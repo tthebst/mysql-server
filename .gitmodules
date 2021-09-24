@@ -3,3 +3,6 @@
 	url = https://github.com/pmem/kvdk
 
 
+[submodule "storage/kvpmem/extra/pmemkv"]
+	path = storage/kvpmem/extra/pmemkv
+	url = https://github.com/pmem/pmemkv
