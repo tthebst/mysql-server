@@ -94,6 +94,7 @@
 
 #include "storage/kvpmem/ha_kvpmem.h"
 
+#include <atomic>
 #include <libpmemkv.hpp>
 #include "my_dbug.h"
 #include "mysql/plugin.h"
@@ -105,7 +106,76 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
                                        bool partitioned, MEM_ROOT *mem_root);
 
 handlerton *kvpmem_hton;
+
+// ====== GLOBAL VARS =======
 pmem::kv::db *kv = nullptr;
+std::mutex table_create_mutex;
+// ====== GLOBAL VARS =======
+
+static std::string read_key(pmem::kv::db::read_iterator &it) {
+  /* key_result's type is a pmem::kv::result<string_view>, for more information
+   * check pmem::kv::result documentation */
+  pmem::kv::result<pmem::kv::string_view> key_result = it.key();
+  /* check if the result is ok, you can also do:
+   * key_result == pmem::kv::status::OK
+   * or
+   * key_result.get_status() == pmem::kv::status::OK */
+  assert(key_result.is_ok());
+
+  return key_result.get_value().data();
+}
+
+static std::string read_value(pmem::kv::db::read_iterator &it) {
+  /* val_result's type is a pmem::kv::result<string_view>, for more information
+   * check pmem::kv::result documentation */
+  pmem::kv::result<pmem::kv::string_view> val_result = it.read_range();
+  /* check if the result is ok, you can also do:
+   * val_result == pmem::kv::status::OK
+   * or
+   * val_result.get_status() == pmem::kv::status::OK */
+  assert(val_result.is_ok());
+
+  return val_result.get_value().data();
+}
+
+static std::string create_key(const std::string table_name,
+                              const std::string key) {
+  return table_name + "_" + key;
+}
+
+// insert element into table that marks first and last element
+static void insert_table_markers(std::string *table_name) {
+  pmem::kv::status s =
+      kv->put(create_key(*table_name, "aaa"), std::to_string(1));
+  assert(s == pmem::kv::status::OK);
+
+  s = kv->put(create_key(*table_name, "zzz"), std::to_string(1));
+  assert(s == pmem::kv::status::OK);
+
+  return;
+}
+
+void print_db() {
+  if (kv == nullptr) {
+    DBUG_PRINT("KVDK", ("PRINT DB: KV==nullptr"));
+    return;
+  }
+
+  DBUG_PRINT("KVDK", ("========= PRINT DB: =========="));
+  /* thread1 */
+  auto res_it = kv->new_read_iterator();
+  assert(res_it.is_ok());
+  auto &it = res_it.get_value();
+  it.seek_to_first();
+  do {
+    /* read a key */
+    auto key = read_key(it);
+    auto value = read_value(it);
+    DBUG_PRINT("KVDK", ("READ DB: %s:%s", key.c_str(), value.c_str()));
+  } while (it.next() == pmem::kv::status::OK);
+
+  DBUG_PRINT("KVDK", ("========== PRINT DB END ============"));
+}
 
 /* Interface to mysqld, to check system tables supported by SE */
 static bool kvpmem_is_supported_system_table(const char *db,
@@ -174,6 +244,8 @@ class lexicographical_comparator {
 
 ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
     : handler(hton, table_arg) {
+  DBUG_PRINT("KVDK", ("Instantiate Handler"));
+
   // first time using the engine. Create a handler
   if (kv == nullptr) {
     pmem::kv::config cfg;
@@ -181,11 +253,9 @@ ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
     /* Instead of expecting already created database pool, we could simply
      * set 'create_if_missing' flag in the config, to provide a pool if needed.
      */
-    pmem::kv::status s = cfg.put_path("/pmem/pmemkv");
+    pmem::kv::status s = cfg.put_path("/pmem/csmap");
     assert(s == pmem::kv::status::OK);
 
-    s = cfg.put_create_or_error_if_exists(true);
-    assert(s == pmem::kv::status::OK);
     s = cfg.put_size(1024UL * 1024UL * 1024UL);
     assert(s == pmem::kv::status::OK);
     s = cfg.put_create_if_missing(true);
@@ -196,12 +266,27 @@ ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
     kv = new pmem::kv::db();
     assert(kv != nullptr);
     s = kv->open("csmap", std::move(cfg));
-    DBUG_PRINT("KVDK", ("Successfully created pmemkv engine %d", s));
+    DBUG_PRINT("KVDK", ("Successfully created pmemkv engine %d", (int)s));
     assert(s == pmem::kv::status::OK);
 
-    s = kv->put("key1", "value1");
-    assert(s == pmem::kv::status::OK);
-    DBUG_PRINT("KVDK", ("Successfully created pmemkv engine"));
+    // init global variables stored in table
+    // curr_table
+    table_create_mutex.lock();
+    std::string v;
+    s = kv->get("curr_table", &v);
+    if (s == pmem::kv::status::NOT_FOUND) {
+      pmem::kv::status s1 =
+          kv->put(create_key("__system__", "curr_table"), std::to_string(1));
+      assert(s1 == pmem::kv::status::OK);
+
+      std::string system = "__system__";
+      insert_table_markers(&system);
+    }
+    table_create_mutex.unlock();
+
+    DBUG_PRINT("KVDK", ("CURR TABLE NUM AT INIT"));
+
+    print_db();
   }
 
   // Initialize a KVDK instance.
@@ -231,8 +316,8 @@ static st_handler_tablename ha_kvpmem_system_tables[] = {
   @retval false  Given db.table_name is not a supported system table.
 */
 static bool kvpmem_is_supported_system_table(const char *db,
-                                              const char *table_name,
-                                              bool is_sql_layer_system_table) {
+                                             const char *table_name,
+                                             bool is_sql_layer_system_table) {
   st_handler_tablename *systab;
 
   // Does this SE support "ALL" SQL layer system tables ?
@@ -397,7 +482,7 @@ int ha_kvpmem::delete_row(const uchar *) {
 */
 
 int ha_kvpmem::index_read_map(uchar *, const uchar *, key_part_map,
-                               enum ha_rkey_function) {
+                              enum ha_rkey_function) {
   int rc;
   DBUG_TRACE;
   rc = HA_ERR_WRONG_COMMAND;
@@ -694,7 +779,7 @@ int ha_kvpmem::external_lock(THD *, int) {
   get_lock_data() in lock.cc
 */
 THR_LOCK_DATA **ha_kvpmem::store_lock(THD *, THR_LOCK_DATA **to,
-                                       enum thr_lock_type lock_type) {
+                                      enum thr_lock_type lock_type) {
   if (lock_type != TL_IGNORE && lock.type == TL_UNLOCK) lock.type = lock_type;
   *to++ = &lock;
   return to;
@@ -740,7 +825,7 @@ int ha_kvpmem::delete_table(const char *, const dd::Table *) {
   mysql_rename_table() in sql_table.cc
 */
 int ha_kvpmem::rename_table(const char *, const char *, const dd::Table *,
-                             dd::Table *) {
+                            dd::Table *) {
   DBUG_TRACE;
   return HA_ERR_WRONG_COMMAND;
 }
@@ -788,14 +873,24 @@ static MYSQL_THDVAR_UINT(create_count_thdvar, 0, nullptr, nullptr, nullptr, 0,
   ha_create_table() in handle.cc
 */
 
-int ha_kvpmem::create(const char *, TABLE *, HA_CREATE_INFO *, dd::Table *) {
+int ha_kvpmem::create(const char *table_name, TABLE *, HA_CREATE_INFO *,
+                      dd::Table *) {
   DBUG_TRACE;
-  /*
-    This is not implemented but we want someone to be able to see that it
-    works.
-  */
+  DBUG_PRINT("KVDK", ("CREATE TABLE %s", table_name));
 
-  // maybe register ins system collection?
+  std::string table_name_str = std::string(table_name);
+
+  // use mutex to protect table creation since table num has to be saved to PMEM
+  table_create_mutex.lock();
+
+  insert_table_markers(&table_name_str);
+
+  table_create_mutex.unlock();
+
+  DBUG_PRINT("KVDK", ("CURR TABLE NUM AT CREATE"));
+
+  print_db();
+
   return 0;
 }
 
