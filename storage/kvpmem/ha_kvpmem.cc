@@ -96,10 +96,12 @@
 
 #include <atomic>
 #include <libpmemkv.hpp>
+#include <libpmemobj++/string_view.hpp>
 #include "my_dbug.h"
 #include "mysql/plugin.h"
 #include "sql/sql_class.h"
 #include "sql/sql_plugin.h"
+#include "sql/table.h"
 #include "typelib.h"
 
 static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
@@ -110,7 +112,20 @@ handlerton *kvpmem_hton;
 // ====== GLOBAL VARS =======
 pmem::kv::db *kv = nullptr;
 std::mutex table_create_mutex;
+std::atomic<long> index_count(1);
 // ====== GLOBAL VARS =======
+
+void print_row(char *row, size_t row_size) {
+  for (size_t i = 0; i < row_size; i++) {
+    DBUG_PRINT("KVDK", ("WRITE ROW char %d: %d", i, *(row + i)));
+  }
+}
+
+void print_row(uchar *row, size_t row_size) {
+  for (size_t i = 0; i < row_size; i++) {
+    DBUG_PRINT("KVDK", ("WRITE ROW char %d: %d", i, *(row + i)));
+  }
+}
 
 static std::string read_key(pmem::kv::db::read_iterator &it) {
   /* key_result's type is a pmem::kv::result<string_view>, for more information
@@ -135,7 +150,12 @@ static std::string read_value(pmem::kv::db::read_iterator &it) {
    * val_result.get_status() == pmem::kv::status::OK */
   assert(val_result.is_ok());
 
-  return val_result.get_value().data();
+  // create copy of result. val_result is not null terminated and calling data()
+  // causes undefined behavior
+  std::string result(val_result.get_value().data(),
+                     val_result.get_value().size());
+
+  return result;
 }
 
 static std::string create_key(const std::string table_name,
@@ -146,7 +166,7 @@ static std::string create_key(const std::string table_name,
 // insert element into table that marks first and last element
 static void insert_table_markers(std::string *table_name) {
   pmem::kv::status s =
-      kv->put(create_key(*table_name, "aaa"), std::to_string(1));
+      kv->put(create_key(*table_name, "000"), std::to_string(1));
   assert(s == pmem::kv::status::OK);
 
   s = kv->put(create_key(*table_name, "zzz"), std::to_string(1));
@@ -176,11 +196,10 @@ void print_db() {
 
   DBUG_PRINT("KVDK", ("========== PRINT DB END ============"));
 }
-
 /* Interface to mysqld, to check system tables supported by SE */
 static bool kvpmem_is_supported_system_table(const char *db,
-                                              const char *table_name,
-                                              bool is_sql_layer_system_table);
+                                             const char *table_name,
+                                             bool is_sql_layer_system_table);
 
 KVpmem_share::KVpmem_share() { thr_lock_init(&lock); }
 
@@ -221,11 +240,6 @@ err:
   return tmp_share;
 }
 
-static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
-                                       bool, MEM_ROOT *mem_root) {
-  return new (mem_root) ha_kvpmem(hton, table);
-}
-
 //! [custom-comparator]
 class lexicographical_comparator {
  public:
@@ -242,10 +256,9 @@ class lexicographical_comparator {
   std::string name() { return "lexicographical_comparator"; }
 };
 
-ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
-    : handler(hton, table_arg) {
+static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
+                                      bool, MEM_ROOT *mem_root) {
   DBUG_PRINT("KVDK", ("Instantiate Handler"));
-
   // first time using the engine. Create a handler
   if (kv == nullptr) {
     pmem::kv::config cfg;
@@ -273,12 +286,8 @@ ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
     // curr_table
     table_create_mutex.lock();
     std::string v;
-    s = kv->get("curr_table", &v);
+    s = kv->get("__system___aaa", &v);
     if (s == pmem::kv::status::NOT_FOUND) {
-      pmem::kv::status s1 =
-          kv->put(create_key("__system__", "curr_table"), std::to_string(1));
-      assert(s1 == pmem::kv::status::OK);
-
       std::string system = "__system__";
       insert_table_markers(&system);
     }
@@ -288,9 +297,11 @@ ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
 
     print_db();
   }
-
-  // Initialize a KVDK instance.
+  return new (mem_root) ha_kvpmem(hton, table);
 }
+
+ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
+    : handler(hton, table_arg), read_iterator{kv->new_read_iterator()} {}
 
 /*
   List of all system tables specific to the SE.
@@ -350,8 +361,15 @@ static bool kvpmem_is_supported_system_table(const char *db,
   handler::ha_open() in handler.cc
 */
 
-int ha_kvpmem::open(const char *, int, uint, const dd::Table *) {
+int ha_kvpmem::open(const char *table_name, int, uint, const dd::Table *) {
   DBUG_TRACE;
+
+  DBUG_PRINT("KVDK", ("OPEN table %s", table_name));
+
+  // set new active table
+  active_table = table_name;
+  // find active idx
+  DBUG_PRINT("KVDK", ("OPEN table %s", active_table.c_str()));
 
   assert(kv != nullptr);
   if (!(share = get_share())) return 1;
@@ -377,6 +395,7 @@ int ha_kvpmem::open(const char *, int, uint, const dd::Table *) {
 
 int ha_kvpmem::close(void) {
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("CLOSE table?"));
   return 0;
 }
 
@@ -410,7 +429,7 @@ int ha_kvpmem::close(void) {
   sql_insert.cc, sql_select.cc, sql_table.cc, sql_udf.cc and sql_update.cc
 */
 
-int ha_kvpmem::write_row(uchar *) {
+int ha_kvpmem::write_row(uchar *row) {
   DBUG_TRACE;
   /*
     KVpmem of a successful write_row. We don't store the data
@@ -418,6 +437,19 @@ int ha_kvpmem::write_row(uchar *) {
     probably need to do something with 'buf'. We report a success
     here, to pretend that the insert was successful.
   */
+  DBUG_PRINT("KVDK", ("WRITE ROW %s", active_table.c_str()));
+
+  long index = index_count.fetch_add(1, std::memory_order_relaxed);
+
+  // need to create stringview with correct size becuase row is not null
+  // terminated
+  pmem::kv::string_view sv(reinterpret_cast<char *>(row), table->s->reclength);
+
+  pmem::kv::status s =
+      kv->put(create_key(active_table, std::to_string(index)), sv);
+  assert(s == pmem::kv::status::OK);
+
+  DBUG_PRINT("KVDK", ("WRITE ROW END"));
   return 0;
 }
 
@@ -563,6 +595,17 @@ int ha_kvpmem::index_last(uchar *) {
 */
 int ha_kvpmem::rnd_init(bool) {
   DBUG_TRACE;
+
+  DBUG_PRINT("KVDK", ("rnd_init:"));
+
+  read_it = &read_iterator.get_value();
+  // seek to first element of table
+  DBUG_PRINT("KVDK", ("seek to table: %s", active_table.c_str()));
+  pmem::kv::status s = read_it->seek(create_key(active_table, "000"));
+  DBUG_PRINT("KVDK", ("read_it pointer: %p %d start key", read_it,
+                      read_it->is_next(), read_key(*read_it).c_str()));
+  assert(s == pmem::kv::status::OK);
+
   return 0;
 }
 
@@ -586,9 +629,34 @@ int ha_kvpmem::rnd_end() {
   filesort.cc, records.cc, sql_handler.cc, sql_select.cc, sql_table.cc and
   sql_update.cc
 */
-int ha_kvpmem::rnd_next(uchar *) {
+int ha_kvpmem::rnd_next(uchar *ret) {
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("rnd_next:"));
 
+  // if not yet inited should not happen...
+  if (read_it == nullptr) {
+    rnd_init(false);
+  }
+
+  pmem::kv::status s = read_it->next();
+
+  if (s == pmem::kv::status::OK) {
+    /* read a key */
+
+    auto key = read_key(*read_it);
+
+    if (key == create_key(active_table, "zzz")) {
+      return HA_ERR_END_OF_FILE;
+    }
+
+    auto value = read_value(*read_it);
+
+    memcpy(ret, value.data(), table->s->reclength);
+  } else {
+    DBUG_PRINT("KVDK", ("rnd_next: ->next failed %d", (int)s));
+
+    return HA_ERR_END_OF_FILE;
+  }
   return 0;
 }
 
@@ -873,8 +941,8 @@ static MYSQL_THDVAR_UINT(create_count_thdvar, 0, nullptr, nullptr, nullptr, 0,
   ha_create_table() in handle.cc
 */
 
-int ha_kvpmem::create(const char *table_name, TABLE *, HA_CREATE_INFO *,
-                      dd::Table *) {
+int ha_kvpmem::create(const char *table_name, TABLE *table_arg,
+                      HA_CREATE_INFO *, dd::Table *) {
   DBUG_TRACE;
   DBUG_PRINT("KVDK", ("CREATE TABLE %s", table_name));
 
@@ -884,7 +952,7 @@ int ha_kvpmem::create(const char *table_name, TABLE *, HA_CREATE_INFO *,
   table_create_mutex.lock();
 
   insert_table_markers(&table_name_str);
-
+  table_arg->s->reclength;
   table_create_mutex.unlock();
 
   DBUG_PRINT("KVDK", ("CURR TABLE NUM AT CREATE"));

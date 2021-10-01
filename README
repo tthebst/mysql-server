@@ -45,7 +45,7 @@ INSERT INTO shop VALUES
     (1,'A',3.45),(1,'B',3.99),(2,'A',10.99),(3,'B',1.45),
     (3,'C',1.69),(3,'D',1.25),(4,'D',19.95);
 
-SELECT * FROM shop ORDER BY article;
+SELECT * FROM shop;
 
 SHOW ENGINES;
 
@@ -53,7 +53,7 @@ SHOW ENGINES;
 
 cmake .. -DCMAKE_INSTALL_PREFIX=/out -DCPACK_MONOLITHIC_INSTALL=1 -DWITH_BOOST=/usr/local -DWITH_KVPMEM_STORAGE_ENGINE=1 -DWITH_DEBUG=1
 
-pmempool rm ~/pmemkv.poolset &&  pmempool create --layout pmemkv_csmap obj ~/pmemkv.poolset && docker build -t mysql-test . && docker rm $(docker stop $(docker ps -a -q --filter name=mysql8 --format="{{.ID}}")) && docker run --network host --cap-add=sys_nice -v $HOME/my-kvpmem.cnf:/etc/mysql/my.cnf -v /pmem:/pmem -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_USER=mysql -e MYSQL_PASSWORD=secret --name mysql8 -d mysql-test mysqld --default-authentication-plugin=mysql_native_password  --debug=d,KVDK
+docker build -t mysql-test . && docker rm $(docker stop $(docker ps -a -q --filter name=mysql8 --format="{{.ID}}")) && docker run --network host --cap-add=sys_nice -v $HOME/my-kvpmem.cnf:/etc/mysql/my.cnf -v /pmem:/pmem -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_USER=mysql -e MYSQL_PASSWORD=secret --name mysql8 -d mysql-test mysqld --default-authentication-plugin=mysql_native_password  --debug=d,KVDK
 
 # PMEMKV 
 
