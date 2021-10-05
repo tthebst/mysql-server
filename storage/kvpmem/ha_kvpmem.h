@@ -70,6 +70,9 @@ class ha_kvpmem : public handler {
   KVpmem_share *share;        ///< Shared lock info
   KVpmem_share *get_share();  ///< Get the share
 
+  /** Flags that specificy the handler instance (table) capability. */
+  Table_flags m_int_table_flags;
+
  public:
   ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg);
   ~ha_kvpmem() override {}
@@ -96,14 +99,7 @@ class ha_kvpmem : public handler {
     This is a list of flags that indicate what functionality the storage engine
     implements. The current table flags are documented in handler.h
   */
-  ulonglong table_flags() const override {
-    /*
-      We are saying that this engine is just statement capable to have
-      an engine that can only handle statement-based logging. This is
-      used in testing.
-    */
-    return HA_BINLOG_STMT_CAPABLE;
-  }
+  Table_flags table_flags() const override;
 
   /** @brief
     This is a bitmap of flags that indicates how the storage engine

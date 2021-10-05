@@ -301,7 +301,9 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
 }
 
 ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
-    : handler(hton, table_arg), read_iterator{kv->new_read_iterator()} {}
+    : handler(hton, table_arg),
+      read_iterator{kv->new_read_iterator()},
+      m_int_table_flags(HA_REQUIRE_PRIMARY_KEY) {}
 
 /*
   List of all system tables specific to the SE.
@@ -597,6 +599,8 @@ int ha_kvpmem::rnd_init(bool) {
   DBUG_TRACE;
 
   DBUG_PRINT("KVDK", ("rnd_init:"));
+
+  print_db();
 
   read_it = &read_iterator.get_value();
   // seek to first element of table
@@ -942,7 +946,7 @@ static MYSQL_THDVAR_UINT(create_count_thdvar, 0, nullptr, nullptr, nullptr, 0,
 */
 
 int ha_kvpmem::create(const char *table_name, TABLE *table_arg,
-                      HA_CREATE_INFO *, dd::Table *) {
+                      HA_CREATE_INFO *table_share, dd::Table *dd_table) {
   DBUG_TRACE;
   DBUG_PRINT("KVDK", ("CREATE TABLE %s", table_name));
 
@@ -952,7 +956,6 @@ int ha_kvpmem::create(const char *table_name, TABLE *table_arg,
   table_create_mutex.lock();
 
   insert_table_markers(&table_name_str);
-  table_arg->s->reclength;
   table_create_mutex.unlock();
 
   DBUG_PRINT("KVDK", ("CURR TABLE NUM AT CREATE"));
@@ -960,6 +963,16 @@ int ha_kvpmem::create(const char *table_name, TABLE *table_arg,
   print_db();
 
   return 0;
+}
+
+/** Get the table flags to use for the statement.
+ @return table flags */
+
+handler::Table_flags ha_kvpmem::table_flags() const {
+  THD *thd = ha_thd();
+  handler::Table_flags flags = m_int_table_flags;
+
+  return (flags);
 }
 
 struct st_mysql_storage_engine kvpmem_storage_engine = {

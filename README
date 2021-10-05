@@ -35,10 +35,11 @@ docker run -it --network host --rm mysql bash -c 'mysql  --user=root --password=
 CREATE database t;
 use t;
 
-CREATE TABLE shop (
+CREATE TABLE shopp (
     article INT UNSIGNED  DEFAULT '0000' NOT NULL,
     dealer  CHAR(20)      DEFAULT ''     NOT NULL,
-    price   DECIMAL(16,2) DEFAULT '0.00' NOT NULL)
+    price   DECIMAL(16,2) DEFAULT '0.00' NOT NULL,
+    PRIMARY KEY (article))
     ENGINE = KVPMEM;
 
 INSERT INTO shop VALUES
@@ -62,4 +63,13 @@ To use pmemkv need to cretea pmempool https://github.com/pmem/pmemkv/blob/master
 ```
 PMEMPOOLSET
 1000M /pmem/pmem
+```
+
+# TPCC
+
+```
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 init
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 -w2 load
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 -w2 -l10 -c2 run 
+
 ```
