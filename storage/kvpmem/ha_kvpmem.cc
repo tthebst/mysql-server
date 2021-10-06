@@ -137,7 +137,11 @@ static std::string read_key(pmem::kv::db::read_iterator &it) {
    * key_result.get_status() == pmem::kv::status::OK */
   assert(key_result.is_ok());
 
-  return key_result.get_value().data();
+  // TODO improve conversion-> this causes a copy
+  std::string result(key_result.get_value().data(),
+                     key_result.get_value().size());
+
+  return result;
 }
 
 static std::string read_value(pmem::kv::db::read_iterator &it) {
@@ -160,13 +164,13 @@ static std::string read_value(pmem::kv::db::read_iterator &it) {
 
 static std::string create_key(const std::string table_name,
                               const std::string key) {
-  return table_name + "_" + key;
+  std::string tot_key = table_name + "_" + key;
+  return tot_key;
 }
 
 // insert element into table that marks first and last element
 static void insert_table_markers(std::string *table_name) {
-  pmem::kv::status s =
-      kv->put(create_key(*table_name, "000"), std::to_string(1));
+  pmem::kv::status s = kv->put(create_key(*table_name, ""), std::to_string(1));
   assert(s == pmem::kv::status::OK);
 
   s = kv->put(create_key(*table_name, "zzz"), std::to_string(1));
@@ -447,10 +451,24 @@ int ha_kvpmem::write_row(uchar *row) {
   // terminated
   pmem::kv::string_view sv(reinterpret_cast<char *>(row), table->s->reclength);
 
-  pmem::kv::status s =
-      kv->put(create_key(active_table, std::to_string(index)), sv);
+  char key[1024];
+
+  size_t offset = 0;
+  for (int i = 0;
+       i < table->key_info[table->s->primary_key].user_defined_key_parts; i++) {
+    strncpy(key + offset,
+            reinterpret_cast<char *>(row) +
+                table->key_info[table->s->primary_key].key_part[i].offset,
+            table->key_info[table->s->primary_key].key_part[i].length);
+    offset += table->key_info[table->s->primary_key].key_part[i].length;
+  }
+
+  std::string key_sv(key, offset);
+
+  pmem::kv::status s = kv->put(create_key(active_table, key_sv), sv);
   assert(s == pmem::kv::status::OK);
 
+  print_db();
   DBUG_PRINT("KVDK", ("WRITE ROW END"));
   return 0;
 }
@@ -605,7 +623,7 @@ int ha_kvpmem::rnd_init(bool) {
   read_it = &read_iterator.get_value();
   // seek to first element of table
   DBUG_PRINT("KVDK", ("seek to table: %s", active_table.c_str()));
-  pmem::kv::status s = read_it->seek(create_key(active_table, "000"));
+  pmem::kv::status s = read_it->seek(create_key(active_table, ""));
   DBUG_PRINT("KVDK", ("read_it pointer: %p %d start key", read_it,
                       read_it->is_next(), read_key(*read_it).c_str()));
   assert(s == pmem::kv::status::OK);
@@ -648,7 +666,6 @@ int ha_kvpmem::rnd_next(uchar *ret) {
     /* read a key */
 
     auto key = read_key(*read_it);
-
     if (key == create_key(active_table, "zzz")) {
       return HA_ERR_END_OF_FILE;
     }
@@ -965,11 +982,12 @@ int ha_kvpmem::create(const char *table_name, TABLE *table_arg,
   return 0;
 }
 
+uint ha_kvpmem::max_supported_keys() const { return (1); }
+
 /** Get the table flags to use for the statement.
  @return table flags */
 
 handler::Table_flags ha_kvpmem::table_flags() const {
-  THD *thd = ha_thd();
   handler::Table_flags flags = m_int_table_flags;
 
   return (flags);

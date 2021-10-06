@@ -137,7 +137,7 @@ class ha_kvpmem : public handler {
     There is no need to implement ..._key_... methods if your engine doesn't
     support indexes.
    */
-  uint max_supported_keys() const override { return 0; }
+  uint max_supported_keys() const override;
 
   /** @brief
     unireg.cc will call this to make sure that the storage engine can handle
@@ -148,7 +148,7 @@ class ha_kvpmem : public handler {
     There is no need to implement ..._key_... methods if your engine doesn't
     support indexes.
    */
-  uint max_supported_key_parts() const override { return 0; }
+  uint max_supported_key_parts() const override { return MAX_REF_PARTS; }
 
   /** @brief
     unireg.cc will call this to make sure that the storage engine can handle
@@ -159,7 +159,7 @@ class ha_kvpmem : public handler {
     There is no need to implement ..._key_... methods if your engine doesn't
     support indexes.
    */
-  uint max_supported_key_length() const override { return 0; }
+  uint max_supported_key_length() const override { return 128; }
 
   /** @brief
     Called in test_quick_select to determine if indexes should be used.
