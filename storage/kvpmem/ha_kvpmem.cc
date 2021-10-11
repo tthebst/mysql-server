@@ -138,7 +138,7 @@ std::string toBinary(int n) {
 }
 
 void print_key(std::string sv) {
-  for (int i = 0; i < sv.length(); ++i) {
+  for (size_t i = 0; i < sv.length(); ++i) {
     std::cout << sv[i] << ":" << toBinary(sv[i]) << " ";
   }
   std::cout << std::endl;
@@ -611,7 +611,7 @@ int ha_kvpmem::update_row(const uchar *old_row, uchar *new_row) {
     assert(s == pmem::kv::status::OK);
   }
 
-  DBUG_PRINT("KVDK", ("UPDATE ROW PUT NEW KEY %s", new_key_sv));
+  DBUG_PRINT("KVDK", ("UPDATE ROW PUT NEW KEY %s", new_key_sv.c_str()));
 
 #ifdef DEBUG
   print_db();
@@ -641,9 +641,51 @@ int ha_kvpmem::update_row(const uchar *old_row, uchar *new_row) {
   sql_acl.cc, sql_udf.cc, sql_delete.cc, sql_insert.cc and sql_select.cc
 */
 
-int ha_kvpmem::delete_row(const uchar *) {
+int ha_kvpmem::delete_row(const uchar *old_row) {
   DBUG_TRACE;
-  return HA_ERR_WRONG_COMMAND;
+  /*
+    KVpmem of a successful write_row. We don't store the data
+    anywhere; they are thrown away. A real implementation will
+    probably need to do something with 'buf'. We report a success
+    here, to pretend that the insert was successful.
+  */
+  DBUG_PRINT("KVDK", ("DELETE ROW %s", active_table.c_str()));
+
+  // remove old row
+  char old_key[1024];
+  pmem::kv::status s;
+
+  // get old key from mysql row data
+  size_t offset = 0;
+  for (size_t i = 0;
+       i < table->key_info[table->s->primary_key].user_defined_key_parts; i++) {
+    strncpy(old_key + offset,
+            reinterpret_cast<char *>(const_cast<uchar *>(old_row)) +
+                table->key_info[table->s->primary_key].key_part[i].offset,
+            table->key_info[table->s->primary_key].key_part[i].length);
+    offset += table->key_info[table->s->primary_key].key_part[i].length;
+  }
+  std::string old_key_sv(old_key, offset);
+
+  // move read iterator to element before this element and store key
+  s = read_it->seek_lower(create_key(active_table, old_key_sv));
+  auto prev_key = read_key(*read_it);
+  assert(s == pmem::kv::status::OK);
+  // delete read_iterator ptr. read_iterator gets destroyed and current row
+  // gets unlocked sucht that it can be deleted
+  read_it.reset(nullptr);
+  s = kv->remove(create_key(active_table, old_key_sv));
+  assert(s == pmem::kv::status::OK);
+
+  // create new read iterator and seek to prev key stored.
+  read_it = std::make_unique<pmem::kv::db::read_iterator>(
+      kv->new_read_iterator().get_value());
+
+  s = read_it->seek(prev_key);
+  assert(s == pmem::kv::status::OK);
+
+  DBUG_PRINT("KVDK", ("DELETE ROW END"));
+  return 0;
 }
 
 /**

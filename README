@@ -69,7 +69,7 @@ PMEMPOOLSET
 
 ```
 docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 init
-docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 -w2 load
-docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 -w2 -l10 -c2 run 
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 -w1 load
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 -w1 -l10 -c2 run 
 
 ```
