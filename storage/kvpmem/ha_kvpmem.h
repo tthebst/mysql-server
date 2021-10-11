@@ -64,8 +64,7 @@ class KVpmem_share : public Handler_share {
 class ha_kvpmem : public handler {
   std::string active_table;
   long active_idx;
-  pmem::kv::db::read_iterator *read_it;
-  pmem::kv::result<pmem::kv::db::read_iterator> read_iterator;
+  std::unique_ptr<pmem::kv::db::read_iterator> read_it;
   THR_LOCK_DATA lock;          ///< MySQL lock
   KVpmem_share *share;        ///< Shared lock info
   KVpmem_share *get_share();  ///< Get the share
