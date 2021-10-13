@@ -500,11 +500,14 @@ int ha_kvpmem::write_row(uchar *row) {
   }
 
   std::string key_sv(key, offset);
+  print_key(key_sv);
+
   pmem::kv::status s = kv->put(create_key(active_table, key_sv), sv);
   assert(s == pmem::kv::status::OK);
 
   print_db();
-  DBUG_PRINT("KVDK", ("WRITE ROW END"));
+  DBUG_PRINT("KVDK",
+             ("WRITE ROW END %s", create_key(active_table, key_sv).c_str()));
   return 0;
 }
 
@@ -695,12 +698,30 @@ int ha_kvpmem::delete_row(const uchar *old_row) {
   index.
 */
 
-int ha_kvpmem::index_read_map(uchar *, const uchar *, key_part_map,
+int ha_kvpmem::index_read_map(uchar *ret, const uchar *key, key_part_map map,
                               enum ha_rkey_function) {
-  int rc;
   DBUG_TRACE;
-  rc = HA_ERR_WRONG_COMMAND;
-  return rc;
+  DBUG_PRINT("KVDK", ("index_read_map %ld", map));
+
+  // get length of key
+  size_t key_len = 0;
+  for (size_t i = 0;
+       i < table->key_info[table->s->primary_key].user_defined_key_parts; i++) {
+    key_len += table->key_info[table->s->primary_key].key_part[i].length;
+  }
+
+  // copy key to string
+  std::string new_key(reinterpret_cast<char *>(const_cast<uchar *>(key)),
+                      key_len);
+  std::string value;
+
+  // find value in table
+  pmem::kv::status s = kv->get(create_key(active_table, new_key), &value);
+  assert(s == pmem::kv::status::OK);
+
+  memcpy(ret, value.data(), table->s->reclength);
+
+  return 0;
 }
 
 /**
@@ -711,6 +732,8 @@ int ha_kvpmem::index_read_map(uchar *, const uchar *, key_part_map,
 int ha_kvpmem::index_next(uchar *) {
   int rc;
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("index_next"));
+
   rc = HA_ERR_WRONG_COMMAND;
   return rc;
 }
@@ -723,6 +746,8 @@ int ha_kvpmem::index_next(uchar *) {
 int ha_kvpmem::index_prev(uchar *) {
   int rc;
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("index_prev"));
+
   rc = HA_ERR_WRONG_COMMAND;
   return rc;
 }
@@ -740,6 +765,8 @@ int ha_kvpmem::index_prev(uchar *) {
 int ha_kvpmem::index_first(uchar *) {
   int rc;
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("index_first"));
+
   rc = HA_ERR_WRONG_COMMAND;
   return rc;
 }
@@ -757,6 +784,8 @@ int ha_kvpmem::index_first(uchar *) {
 int ha_kvpmem::index_last(uchar *) {
   int rc;
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("index_last"));
+
   rc = HA_ERR_WRONG_COMMAND;
   return rc;
 }
@@ -780,8 +809,6 @@ int ha_kvpmem::rnd_init(bool) {
 
   DBUG_PRINT("KVDK", ("rnd_init:"));
 
-  print_db();
-
   // seek to first element of table
   pmem::kv::status s = read_it->seek(create_key(active_table, ""));
   assert(s == pmem::kv::status::OK);
@@ -791,6 +818,7 @@ int ha_kvpmem::rnd_init(bool) {
 
 int ha_kvpmem::rnd_end() {
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("rnd_end"));
   return 0;
 }
 
@@ -811,7 +839,8 @@ int ha_kvpmem::rnd_end() {
 */
 int ha_kvpmem::rnd_next(uchar *ret) {
   DBUG_TRACE;
-  DBUG_PRINT("KVDK", ("rnd_next:"));
+  DBUG_PRINT("KVDK", ("rnd_next: %s %s", active_table.c_str(),
+                      table->s->table_name.str));
 
   // if not yet inited should not happen...
   if (read_it == nullptr) {
@@ -859,7 +888,10 @@ int ha_kvpmem::rnd_next(uchar *ret) {
   @see
   filesort.cc, sql_select.cc, sql_delete.cc and sql_update.cc
 */
-void ha_kvpmem::position(const uchar *) { DBUG_TRACE; }
+void ha_kvpmem::position(const uchar *) {
+  DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("position"));
+}
 
 /**
   @brief
@@ -878,6 +910,7 @@ void ha_kvpmem::position(const uchar *) { DBUG_TRACE; }
 int ha_kvpmem::rnd_pos(uchar *, uchar *) {
   int rc;
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("rnd_pos"));
   rc = HA_ERR_WRONG_COMMAND;
   return rc;
 }
@@ -922,6 +955,7 @@ int ha_kvpmem::rnd_pos(uchar *, uchar *) {
 */
 int ha_kvpmem::info(uint) {
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("info"));
   if (stats.records < 2) stats.records = 2;
   return 0;
 }
@@ -937,6 +971,7 @@ int ha_kvpmem::info(uint) {
 */
 int ha_kvpmem::extra(enum ha_extra_function) {
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("extra"));
   return 0;
 }
 
@@ -962,6 +997,7 @@ int ha_kvpmem::extra(enum ha_extra_function) {
 */
 int ha_kvpmem::delete_all_rows() {
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("delete_all_rows"));
   return HA_ERR_WRONG_COMMAND;
 }
 
@@ -984,7 +1020,8 @@ int ha_kvpmem::delete_all_rows() {
 */
 int ha_kvpmem::external_lock(THD *, int) {
   DBUG_TRACE;
-  DBUG_PRINT("KVDK", ("external lock"));
+  DBUG_PRINT("KVDK", ("external_lock: %s %s", active_table.c_str(),
+                      table->s->table_name.str));
   return 0;
 }
 
@@ -1028,7 +1065,8 @@ int ha_kvpmem::external_lock(THD *, int) {
 THR_LOCK_DATA **ha_kvpmem::store_lock(THD *, THR_LOCK_DATA **to,
                                       enum thr_lock_type lock_type) {
   DBUG_TRACE;
-  DBUG_PRINT("KVDK", ("store_lock"));
+  DBUG_PRINT("KVDK", ("store_lock: %s %s", active_table.c_str(),
+                      table->s->table_name.str));
   if (lock_type != TL_IGNORE && lock.type == TL_UNLOCK) lock.type = lock_type;
   *to++ = &lock;
   return to;
@@ -1055,6 +1093,7 @@ THR_LOCK_DATA **ha_kvpmem::store_lock(THD *, THR_LOCK_DATA **to,
 */
 int ha_kvpmem::delete_table(const char *, const dd::Table *) {
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("delete_table"));
   /* This is not implemented but we want someone to be able that it works. */
   return 0;
 }
@@ -1094,6 +1133,8 @@ int ha_kvpmem::rename_table(const char *, const char *, const dd::Table *,
 */
 ha_rows ha_kvpmem::records_in_range(uint, key_range *, key_range *) {
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("records_in_range"));
+
   return 10;  // low number to force index usage
 }
 
