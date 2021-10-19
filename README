@@ -98,3 +98,10 @@ docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -pse
 docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 -w1 -l10 -c2 run 
 
 ```
+
+DECLARE @Counter INT 
+SET @Counter=1
+WHILE ( @Counter <= 10000)
+BEGIN
+  INSERT INTO shopp VALUES (@Counter,3,0)
+END;

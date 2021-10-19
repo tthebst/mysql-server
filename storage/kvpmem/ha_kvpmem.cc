@@ -95,6 +95,7 @@
 #include "storage/kvpmem/ha_kvpmem.h"
 
 #include <atomic>
+#include <chrono>
 #include <libpmemkv.hpp>
 #include <libpmemobj++/string_view.hpp>
 #include <memory>
@@ -107,7 +108,7 @@
 
 static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
                                        bool partitioned, MEM_ROOT *mem_root);
-
+static char *kvpmem_data_file_path = nullptr;
 handlerton *kvpmem_hton;
 
 // ====== GLOBAL VARS =======
@@ -307,7 +308,8 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
     /* Instead of expecting already created database pool, we could simply
      * set 'create_if_missing' flag in the config, to provide a pool if needed.
      */
-    pmem::kv::status s = cfg.put_path("/pmem/csmap");
+    DBUG_PRINT("KVDK", ("Instantiate KV at %s", kvpmem_data_file_path));
+    pmem::kv::status s = cfg.put_path(kvpmem_data_file_path);
     assert(s == pmem::kv::status::OK);
 
     s = cfg.put_size(1024UL * 1024UL * 1024UL);
@@ -482,32 +484,46 @@ int ha_kvpmem::write_row(uchar *row) {
     here, to pretend that the insert was successful.
   */
   DBUG_PRINT("KVDK", ("WRITE ROW %s", active_table.c_str()));
+  auto t1 = std::chrono::high_resolution_clock::now();
 
   // need to create stringview with correct size becuase row is not null
-  // terminated
   pmem::kv::string_view sv(reinterpret_cast<char *>(row), table->s->reclength);
 
-  char key[1024];
+  std::string key_str = std::string();
 
   size_t offset = 0;
   for (size_t i = 0;
        i < table->key_info[table->s->primary_key].user_defined_key_parts; i++) {
-    strncpy(key + offset,
-            reinterpret_cast<char *>(row) +
-                table->key_info[table->s->primary_key].key_part[i].offset,
-            table->key_info[table->s->primary_key].key_part[i].length);
+    key_str.append(
+        reinterpret_cast<char *>(row) +
+            table->key_info[table->s->primary_key].key_part[i].offset,
+        table->key_info[table->s->primary_key].key_part[i].length);
     offset += table->key_info[table->s->primary_key].key_part[i].length;
   }
+  auto t2 = std::chrono::high_resolution_clock::now();
 
-  std::string key_sv(key, offset);
-  print_key(key_sv);
+  DBUG_PRINT(
+      "KVDK",
+      ("KV Put prepare runtime = %ld ms",
+       std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count()));
 
-  pmem::kv::status s = kv->put(create_key(active_table, key_sv), sv);
+  t1 = std::chrono::high_resolution_clock::now();
+  pmem::kv::status s = kv->put(active_table + "_" + key_str, sv);
   assert(s == pmem::kv::status::OK);
+  t2 = std::chrono::high_resolution_clock::now();
 
-  print_db();
+  DBUG_PRINT(
+      "KVDK",
+      ("KV Put runtime = %ld ms",
+       std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count()));
+
+  std::cout
+      << "KV Put runtime = "
+      << std::chrono::duration_cast<std::chrono::microseconds>(t2 - t1).count()
+      << " ms\n";
+
   DBUG_PRINT("KVDK",
-             ("WRITE ROW END %s", create_key(active_table, key_sv).c_str()));
+             ("WRITE ROW END %s", create_key(active_table, key_str).c_str()));
   return 0;
 }
 
@@ -1252,6 +1268,12 @@ static MYSQL_THDVAR_LONGLONG(signed_longlong_thdvar, PLUGIN_VAR_RQCMDARG,
                              "LLONG_MIN..LLONG_MAX", nullptr, nullptr, -10,
                              LLONG_MIN, LLONG_MAX, 0);
 
+static MYSQL_SYSVAR_STR(data_file_path, kvpmem_data_file_path,
+                        PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY |
+                            PLUGIN_VAR_NOPERSIST,
+                        "Path to individual files and their sizes.", nullptr,
+                        nullptr, const_cast<char *>("csmap"));
+
 static SYS_VAR *kvpmem_system_variables[] = {
     MYSQL_SYSVAR(enum_var),
     MYSQL_SYSVAR(ulong_var),
@@ -1259,6 +1281,7 @@ static SYS_VAR *kvpmem_system_variables[] = {
     MYSQL_SYSVAR(double_thdvar),
     MYSQL_SYSVAR(last_create_thdvar),
     MYSQL_SYSVAR(create_count_thdvar),
+    MYSQL_SYSVAR(data_file_path),
     MYSQL_SYSVAR(signed_int_var),
     MYSQL_SYSVAR(signed_int_thdvar),
     MYSQL_SYSVAR(signed_long_var),
