@@ -42,7 +42,7 @@ CREATE TABLE shopp (
     PRIMARY KEY (article))
     ENGINE = KVPMEM;
 
-INSERT INTO shop VALUES
+INSERT INTO shopp VALUES
     (1,'A',3.45),(1,'B',3.99),(2,'A',10.99),(3,'B',1.45),
     (3,'C',1.69),(3,'D',1.25),(4,'D',19.95);
 
@@ -54,7 +54,7 @@ SHOW ENGINES;
 
 cmake .. -DCMAKE_INSTALL_PREFIX=/out -DCPACK_MONOLITHIC_INSTALL=1 -DWITH_BOOST=/usr/local -DWITH_KVPMEM_STORAGE_ENGINE=1 -DWITH_DEBUG=1
 
-docker build -t mysql-test . && docker rm $(docker stop $(docker ps -a -q --filter name=mysql8 --format="{{.ID}}")) && docker run --network host --cap-add=sys_nice -v $HOME/my-kvpmem.cnf:/etc/mysql/my.cnf -v /pmem:/pmem -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_USER=mysql -e MYSQL_PASSWORD=secret --name mysql8 -d mysql-test mysqld --default-authentication-plugin=mysql_native_password  --debug=d,KVDK
+docker build -t mysql-test . && docker rm $(docker stop $(docker ps -a -q --filter name=mysql8 --format="{{.ID}}")) && docker run --network host --cap-add=sys_nice -v $HOME/my-kvpmem.cnf:/etc/mysql/my.cnf -v /pmem:/pmem -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_USER=mysql -e MYSQL_PASSWORD=secret --name mysql8 -d mysql-test mysqld --default-authentication-plugin=mysql_native_password  doc
 
 # PMEMKV 
 
@@ -67,24 +67,22 @@ PMEMPOOLSET
 
 # multitable test
 
-CREATE DATABASE t; USE t;
+CREATE DATABASE t2; USE t2;
 
 CREATE TABLE shopp (
     article_id INT UNSIGNED,
     price   INT UNSIGNED NOT NULL,
-    used   INT UNSIGNED NOT NULL,
-    PRIMARY KEY (article_id))
+    used   INT UNSIGNED NOT NULL)
     ENGINE = KVPMEM;
 
 
 CREATE TABLE shop (
     article_id INT UNSIGNED,
     price   INT UNSIGNED NOT NULL,
-    used   INT UNSIGNED NOT NULL,
-    PRIMARY KEY (article_id))
+    used   INT UNSIGNED NOT NULL)
     ENGINE = KVPMEM;
 
-INSERT INTO shop VALUES (1,3,0),(2,4,1),(3,4,1),(4,5,0),(5,10,0); SELECT * FROM shop;
+INSERT INTO shop VALUES (1,3,0),(2,4,1),(3,4,1),(4,5,0),(5,10,0),(444,5,0),(23442,10,0); SELECT * FROM shop;
 
 INSERT INTO shopp VALUES (1,3,0),(2,4,0),(3,4,0),(4,5,0),(5,10,0);SELECT * FROM shopp;
 
@@ -93,15 +91,58 @@ SELECT * FROM shop,shopp WHERE shop.article_id=shopp.article_id;
 # TPCC
 
 ```
-docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 init
-docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 -w1 load
-docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest1 -w1 -l10 -c2 run 
+docker run --network host --rm tthebst/tppc-bench:kvpmem-noprim -h127.0.0.1 -uroot -psecret -dtest init
+docker run --network host --rm tthebst/tppc-bench:kvpmem-noprim -h127.0.0.1 -uroot -psecret -dtest -w1 load
+docker run --network host --rm tthebst/tppc-bench:kvpmem-noprim -h127.0.0.1 -uroot -psecret -dtest -w1 -l100 -c1 run 
 
 ```
 
-DECLARE @Counter INT 
-SET @Counter=1
-WHILE ( @Counter <= 10000)
-BEGIN
-  INSERT INTO shopp VALUES (@Counter,3,0)
-END;
+# BUILD && RUN ON PMEM
+
+````
+sudo openconnect sslvpn.ethz.ch --user=tgretler@student-net.ethz.ch --usergroup=student-net
+docker build -t tthebst/mysql-test:kvpmem . && $(docker save tthebst/mysql-test:kvpmem | bzip2 | pv | ssh tgretler@r740-01.ethz.ch docker load)
+docker build -t tthebst/mysql-test:kvpmem . && docker push tthebst/mysql-test:kvpmem
+docker run --network host --cap-add=sys_nice -v /mnt/local2/tim/my-kvpmem.cnf:/etc/mysql/my.cnf -v /mnt/pmem2:/pmem -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_USER=mysql -e MYSQL_PASSWORD=secret --name mysql8 -d tthebst/mysql-test:kvpmem mysqld --default-authentication-plugin=mysql_native_password  --debug=d,KVDK
+```
+
+````  
+
+  SELECT c_discount, c_last, c_credit, w_tax FROM customer, warehouse WHERE w_id = 1 AND c_w_id = w_id AND c_d_id = 1 AND c_id = 1;
+  SELECT d_next_o_id, d_tax FROM district WHERE d_id = 1 AND d_w_id = 1 FOR UPDATE;
+  UPDATE district SET d_next_o_id = 1 + 1 WHERE d_id = 1 AND d_w_id = 1;
+  INSERT INTO orders (o_id, o_d_id, o_w_id, o_c_id, o_entry_d, o_ol_cnt, o_all_local) VALUES(1, 1, 1, 1, 1, 1, 1);
+  INSERT INTO new_orders (no_o_id, no_d_id, no_w_id) VALUES (1,1,1);
+  SELECT i_price, i_name, i_data FROM item WHERE i_id = 1;
+  SELECT s_quantity, s_data, s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10 FROM stock WHERE s_i_id = 1 AND s_w_id = 1 FOR UPDATE;
+  UPDATE stock SET s_quantity = 1 WHERE s_i_id = 1 AND s_w_id = 1;
+  INSERT INTO order_line (ol_o_id, ol_d_id, ol_w_id, ol_number, ol_i_id, ol_supply_w_id, ol_quantity, ol_amount, ol_dist_info) VALUES (1, 1, 1, 1, 1, 1, 1, 1, 1);
+  UPDATE warehouse SET w_ytd = w_ytd + 1 WHERE w_id = 1;
+  SELECT w_street_1, w_street_2, w_city, w_state, w_zip, w_name FROM warehouse WHERE w_id = 1;
+  UPDATE district SET d_ytd = d_ytd + 1 WHERE d_w_id = 1 AND d_id = 1;
+  SELECT d_street_1, d_street_2, d_city, d_state, d_zip, d_name FROM district WHERE d_w_id = 1 AND d_id = 1;
+  SELECT count(c_id) FROM customer WHERE c_w_id = 1 AND c_d_id = 1 AND c_last = 1;
+  SELECT c_id FROM customer WHERE c_w_id = 1 AND c_d_id = 1 AND c_last = 1 ORDER BY c_first;
+  SELECT c_first, c_middle, c_last, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_credit, c_credit_lim, c_discount, c_balance, c_since FROM customer WHERE c_w_id = 1 AND c_d_id = 1 AND c_id = 1 FOR UPDATE;
+  SELECT c_data FROM customer WHERE c_w_id = 1 AND c_d_id = 1 AND c_id = 1;
+  UPDATE customer SET c_balance = 1, c_data = 1 WHERE c_w_id = 1 AND c_d_id = 1 AND c_id = 1;
+  UPDATE customer SET c_balance = 1 WHERE c_w_id = 1 AND c_d_id = 1 AND c_id = 1;
+  INSERT INTO history(h_c_d_id, h_c_w_id, h_c_id, h_d_id, h_w_id, h_date, h_amount, h_data) VALUES(1, 1, 1, 1, 1, 1, 1, 1);
+  SELECT count(c_id) FROM customer WHERE c_w_id = 1 AND c_d_id = 1 AND c_last = 1;
+  SELECT c_balance, c_first, c_middle, c_last FROM customer WHERE c_w_id = 1 AND c_d_id = 1 AND c_last = 1 ORDER BY c_first;
+  SELECT c_balance, c_first, c_middle, c_last FROM customer WHERE c_w_id = 1 AND c_d_id = 1 AND c_id = 1;
+x  SELECT o_id, o_entry_d, COALESCE(o_carrier_id,0) FROM orders WHERE o_w_id = 1 AND o_d_id = 1 AND o_c_id = 1 AND o_id = 20;
+  SELECT ol_i_id, ol_supply_w_id, ol_quantity, ol_amount, ol_delivery_d FROM order_line WHERE ol_w_id = 1 AND ol_d_id = 1 AND ol_o_id = 1;
+  SELECT COALESCE(MIN(no_o_id),0) FROM new_orders WHERE no_d_id = 1 AND no_w_id = 1;
+  DELETE FROM new_orders WHERE no_o_id = 1 AND no_d_id = 1 AND no_w_id = 1;
+  SELECT o_c_id FROM orders WHERE o_id = 1 AND o_d_id = 1 AND o_w_id = 1;
+  UPDATE orders SET o_carrier_id = 1 WHERE o_id = 1 AND o_d_id = 1 AND o_w_id = 1;
+  UPDATE order_line SET ol_delivery_d = 1 WHERE ol_o_id = 1 AND ol_d_id = 1 AND ol_w_id = 1;
+  SELECT SUM(ol_amount) FROM order_line WHERE ol_o_id = 1 AND ol_d_id = 1 AND ol_w_id = 1;
+  UPDATE customer SET c_balance = c_balance + 1 , c_delivery_cnt = c_delivery_cnt + 1 WHERE c_id = 1 AND c_d_id = 1 AND c_w_id = 1;
+  SELECT d_next_o_id FROM district WHERE d_id = 1 AND d_w_id = 1;
+  SELECT DISTINCT ol_i_id FROM order_line WHERE ol_w_id = 1 AND ol_d_id = 1 AND ol_o_id < 1 AND ol_o_id >= (1 - 20);
+  SELECT count(*) FROM stock WHERE s_w_id = 1 AND s_i_id = 1 AND s_quantity < 1;
+
+
+````
