@@ -54,6 +54,9 @@
 class KVpmem_share : public Handler_share {
  public:
   THR_LOCK lock;
+  // read iterator shared across handler instantiations
+  std::unique_ptr<pmem::kv::db::read_iterator> read_it;
+  std::vector<pmem::kv::string_view> subquery_stack;
   KVpmem_share();
   ~KVpmem_share() override { thr_lock_delete(&lock); }
 };
@@ -239,6 +242,8 @@ class ha_kvpmem : public handler {
     skip it and and MySQL will treat it as not implemented.
   */
   int index_last(uchar *buf) override;
+  int index_end() override;
+  int index_init(uint idx, bool sorted) override;
 
   /** @brief
     Unlike index_init(), rnd_init() can be called two consecutive times
