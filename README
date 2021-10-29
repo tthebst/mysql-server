@@ -69,14 +69,6 @@ PMEMPOOLSET
 
 CREATE DATABASE t2; USE t2;
 
-CREATE TABLE shopp (
-    article_id INT UNSIGNED,
-    price   INT UNSIGNED NOT NULL,
-    used   INT UNSIGNED NOT NULL,
-    primary key (article_id))
-    ENGINE = KVPMEM;
-
-
 CREATE TABLE shop (
     article_id INT UNSIGNED,
     price   INT UNSIGNED NOT NULL,
@@ -84,7 +76,21 @@ CREATE TABLE shop (
     primary key (article_id))
     ENGINE = KVPMEM;
 
-INSERT INTO shop VALUES (1,3,0),(2,4,1),(3,4,1),(4,5,0),(5,10,0),(444,5,0),(23442,10,0); SELECT * FROM shop;
+INSERT INTO shop VALUES (1,3,0),(2,4,1),(3,4,1),(4,5,0),(5,10,0),(444,5,0),(23442,10,0); 
+SELECT * FROM shop;
+UPDATE shop SET used=1;
+SELECT * FROM shop;
+INSERT INTO shop VALUES (1,3,0);
+SELECT * FROM shop;
+DELETE FROM shop WHERE used=1;
+
+CREATE TABLE shopp (
+    article_id INT UNSIGNED,
+    price   INT UNSIGNED NOT NULL,
+    used   INT UNSIGNED NOT NULL,
+    primary key (article_id))
+    ENGINE = KVPMEM;
+
 
 INSERT INTO shopp VALUES (1,3,0),(2,4,0),(3,4,0),(4,5,0),(5,10,0);SELECT * FROM shopp;
 

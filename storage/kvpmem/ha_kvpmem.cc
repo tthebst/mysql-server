@@ -95,6 +95,7 @@
 #include "storage/kvpmem/ha_kvpmem.h"
 
 #include <atomic>
+#include <bitset>
 #include <libpmemkv.hpp>
 #include <libpmemobj++/string_view.hpp>
 #include <memory>
@@ -116,17 +117,14 @@ std::mutex table_create_mutex;
 std::atomic<long> index_count(1);
 // ====== GLOBAL VARS =======
 
-// void print_row(char *row, size_t row_size) {
-//   for (size_t i = 0; i < row_size; i++) {
-//     DBUG_PRINT("KVDK", ("WRITE ROW char %lud: %d", i, *(row + i)));
-//   }
-// }
-
-// void print_row(uchar *row, size_t row_size) {
-//   for (size_t i = 0; i < row_size; i++) {
-//     DBUG_PRINT("KVDK", ("WRITE ROW char %lud: %d", i, *(row + i)));
-//   }
-// }
+#define ASSERT(condition, status)                                             \
+  {                                                                           \
+    if (!(condition)) {                                                       \
+      std::cout << "ASSERT FAILED: " << #condition << " STATUS: " << (status) \
+                << " @ " << __FILE__ << " (" << __LINE__ << ")" << std::endl; \
+      assert(condition);                                                      \
+    }                                                                         \
+  }
 
 std::string toBinary(int n) {
   std::string r;
@@ -444,6 +442,54 @@ int ha_kvpmem::close(void) {
   sql_insert.cc, sql_select.cc, sql_table.cc, sql_udf.cc and sql_update.cc
 */
 
+std::string gen_bit_string(const uchar *key, uint64_t key_offset,
+                           uint64_t key_length) {
+  switch (key_length) {
+    case 1:
+      int8_t key_num8;
+      memcpy(&key_num8, key + key_offset, key_length);
+      return std::bitset<8>(key_num8).to_string();
+      break;
+    case 2:
+      int16_t key_num16;
+      memcpy(&key_num16, key + key_offset, key_length);
+      return std::bitset<16>(key_num16).to_string();
+      break;
+    case 3:
+      int32_t key_num24;
+      memcpy(&key_num24, key + key_offset, key_length);
+      return std::bitset<24>(key_num24).to_string();
+      break;
+    case 4:
+      int64_t key_num32;
+      memcpy(&key_num32, key + key_offset, key_length);
+      return std::bitset<32>(key_num32).to_string();
+      break;
+    case 8:
+      int64_t key_num64;
+      memcpy(&key_num64, key + key_offset, key_length);
+      return std::bitset<64>(key_num64).to_string();
+      break;
+
+    default:
+      DBUG_PRINT("KVDK", ("gen_bit_string invalid primary key type"));
+      assert(false);
+      break;
+  }
+}
+
+std::string create_primary_key(std::string active_table, const uchar *row,
+                               KEY *key) {
+  std::string key_str = std::string();
+
+  for (size_t i = 0; i < key->user_defined_key_parts; i++) {
+    key_str.append(
+        gen_bit_string(row, key->key_part[i].offset, key->key_part[i].length));
+  }
+
+  return active_table + "_" + key_str;
+}
+
 int ha_kvpmem::write_row(uchar *row) {
   DBUG_TRACE;
   /*
@@ -453,25 +499,25 @@ int ha_kvpmem::write_row(uchar *row) {
     here, to pretend that the insert was successful.
   */
 
+  DBUG_PRINT("KVDK", ("write_row %s", active_table.c_str()));
+
   // need to create stringview with correct size becuase row is not null
   pmem::kv::string_view sv(reinterpret_cast<char *>(row), table->s->reclength);
 
-  std::string key_str = std::string();
+  auto key_str = create_primary_key(active_table, row,
+                                    &table->key_info[table->s->primary_key]);
 
-  size_t offset = 0;
-  for (size_t i = 0;
-       i < table->key_info[table->s->primary_key].user_defined_key_parts; i++) {
-    key_str.append(
-        reinterpret_cast<char *>(row) +
-            table->key_info[table->s->primary_key].key_part[i].offset,
-        table->key_info[table->s->primary_key].key_part[i].length,
-        table->key_info[table->s->primary_key].key_part[i].type);
-
-    offset += table->key_info[table->s->primary_key].key_part[i].length;
+  if (kv->exists(key_str) == pmem::kv::status::OK) {
+    return HA_ERR_FOUND_DUPP_UNIQUE;
   }
 
-  pmem::kv::status s = kv->put(active_table + "_" + key_str, sv);
-  assert(s == pmem::kv::status::OK);
+  pmem::kv::status s = kv->put(key_str, sv);
+  ASSERT(s == pmem::kv::status::OK, s);
+
+  print_key(active_table + "_" + key_str);
+  print_key(key_str);
+
+  DBUG_PRINT("KVDK", ("write_row %s done", key_str.data()));
 
   return 0;
 }
@@ -509,68 +555,49 @@ int ha_kvpmem::update_row(const uchar *old_row, uchar *new_row) {
   */
   DBUG_PRINT("KVDK", ("UPDATE ROW %s", active_table.c_str()));
 
-  // remove old row
-  char old_key[1024];
-
-  // get old key from mysql row data
-  size_t offset = 0;
-  for (size_t i = 0;
-       i < table->key_info[table->s->primary_key].user_defined_key_parts; i++) {
-    strncpy(old_key + offset,
-            reinterpret_cast<char *>(const_cast<uchar *>(old_row)) +
-                table->key_info[table->s->primary_key].key_part[i].offset,
-            table->key_info[table->s->primary_key].key_part[i].length);
-    offset += table->key_info[table->s->primary_key].key_part[i].length;
-  }
-  std::string old_key_sv(old_key, offset);
+  auto old_primary_key =
+      create_primary_key(active_table, const_cast<uchar *>(old_row),
+                         &table->key_info[table->s->primary_key]);
 
   // prepare new row to be inserted and insert
-  char new_key[1024];
   pmem::kv::string_view sv(reinterpret_cast<char *>(new_row),
                            table->s->reclength);
   // get key from mysql row data
+  auto new_primary_key = create_primary_key(
+      active_table, new_row, &table->key_info[table->s->primary_key]);
 
-  offset = 0;
-  for (size_t i = 0;
-       i < table->key_info[table->s->primary_key].user_defined_key_parts; i++) {
-    strncpy(new_key + offset,
-            reinterpret_cast<char *>(new_row) +
-                table->key_info[table->s->primary_key].key_part[i].offset,
-            table->key_info[table->s->primary_key].key_part[i].length);
-    offset += table->key_info[table->s->primary_key].key_part[i].length;
-  }
-
-  std::string new_key_sv(new_key, offset);
   pmem::kv::status s;
-  if (new_key_sv == old_key_sv) {
+  DBUG_PRINT("KVDK", ("%s", old_primary_key.data()));
+  DBUG_PRINT("KVDK", ("%s", new_primary_key.data()));
+  if (new_primary_key == old_primary_key) {
     // set share->read_it to null to delete share->read_iterator and lock on
     // table from this thread
     share->read_it.reset(nullptr);
-    s = kv->remove(create_key(active_table, old_key_sv));
-    assert(s == pmem::kv::status::OK);
+    s = kv->remove(old_primary_key);
+    ASSERT(s == pmem::kv::status::OK, s);
     share->read_it = std::make_unique<pmem::kv::db::read_iterator>(
         kv->new_read_iterator().get_value());
 
-    s = kv->put(create_key(active_table, new_key_sv), sv);
+    s = kv->put(old_primary_key, sv);
     assert(s == pmem::kv::status::OK);
 
-    s = share->read_it->seek(create_key(active_table, new_key_sv));
-    assert(s == pmem::kv::status::OK);
+    s = share->read_it->seek(old_primary_key);
+    ASSERT(s == pmem::kv::status::OK, s);
+
   } else {
     // move read iterator to element before this element and store key
-    s = share->read_it->seek_lower(create_key(active_table, old_key_sv));
+    s = share->read_it->seek_lower(old_primary_key);
     auto prev_key = read_key(*share->read_it);
-    assert(s == pmem::kv::status::OK);
-    // delete share->read_iterator ptr. share->read_iterator gets destroyed and
-    // current row gets unlocked sucht that it can be deleted
+    ASSERT(s == pmem::kv::status::OK,
+           s);  // delete share->read_iterator ptr. share->read_iterator gets
+                // destroyed
+    // and current row gets unlocked sucht that it can be deleted
     share->read_it.reset(nullptr);
-    s = kv->remove(create_key(active_table, old_key_sv));
-    assert(s == pmem::kv::status::OK);
-
+    s = kv->remove(old_primary_key);
+    ASSERT(s == pmem::kv::status::OK, s);
     // insert new element
-    s = kv->put(create_key(active_table, new_key_sv), sv);
-    assert(s == pmem::kv::status::OK);
-
+    s = kv->put(new_primary_key, sv);
+    ASSERT(s == pmem::kv::status::OK, s);
     // create new read iterator and seek to prev key stored.
     share->read_it = std::make_unique<pmem::kv::db::read_iterator>(
         kv->new_read_iterator().get_value());
@@ -579,7 +606,7 @@ int ha_kvpmem::update_row(const uchar *old_row, uchar *new_row) {
     assert(s == pmem::kv::status::OK);
   }
 
-  DBUG_PRINT("KVDK", ("UPDATE ROW PUT NEW KEY %s", new_key_sv.c_str()));
+  DBUG_PRINT("KVDK", ("UPDATE ROW PUT NEW KEY"));
 
 #ifdef DEBUG
   print_db();
@@ -620,38 +647,27 @@ int ha_kvpmem::delete_row(const uchar *old_row) {
   DBUG_PRINT("KVDK", ("DELETE ROW %s", active_table.c_str()));
 
   // remove old row
-  char old_key[1024];
-  pmem::kv::status s;
-
-  // get old key from mysql row data
-  size_t offset = 0;
-  for (size_t i = 0;
-       i < table->key_info[table->s->primary_key].user_defined_key_parts; i++) {
-    strncpy(old_key + offset,
-            reinterpret_cast<char *>(const_cast<uchar *>(old_row)) +
-                table->key_info[table->s->primary_key].key_part[i].offset,
-            table->key_info[table->s->primary_key].key_part[i].length);
-    offset += table->key_info[table->s->primary_key].key_part[i].length;
-  }
-  std::string old_key_sv(old_key, offset);
+  auto old_primary_key =
+      create_primary_key(active_table, const_cast<uchar *>(old_row),
+                         &table->key_info[table->s->primary_key]);
 
   // move read iterator to element before this element and store key
-  s = share->read_it->seek_lower(create_key(active_table, old_key_sv));
+  pmem::kv::status s = share->read_it->seek_lower(old_primary_key);
   auto prev_key = read_key(*share->read_it);
-  assert(s == pmem::kv::status::OK);
-  // delete share->read_iterator ptr. share->read_iterator gets destroyed and
+  ASSERT(s == pmem::kv::status::OK, s);
+  // delete share->read_iterator ptr. share->read_iterator gets
+  // destroyed and
   // current row gets unlocked sucht that it can be deleted
   share->read_it.reset(nullptr);
-  s = kv->remove(create_key(active_table, old_key_sv));
-  assert(s == pmem::kv::status::OK);
+  s = kv->remove(old_primary_key);
+  ASSERT(s == pmem::kv::status::OK, s);
 
   // create new read iterator and seek to prev key stored.
   share->read_it = std::make_unique<pmem::kv::db::read_iterator>(
       kv->new_read_iterator().get_value());
 
   s = share->read_it->seek(prev_key);
-  assert(s == pmem::kv::status::OK);
-
+  ASSERT(s == pmem::kv::status::OK, s);
   DBUG_PRINT("KVDK", ("DELETE ROW END"));
   return 0;
 }
@@ -663,28 +679,34 @@ int ha_kvpmem::delete_row(const uchar *old_row) {
   index.
 */
 
-int ha_kvpmem::index_read_map(uchar *ret, const uchar *key, key_part_map map,
+int ha_kvpmem::index_read_map(uchar *ret, const uchar *key, key_part_map,
                               enum ha_rkey_function) {
   DBUG_TRACE;
-  DBUG_PRINT("KVDK", ("index_read_map %ld", map));
+  DBUG_PRINT("KVDK", ("index_read_map "));
 
-  // get length of key
-  size_t key_len = 0;
+  std::string key_str = active_table + "_";
+  pmem::kv::status s;
+  size_t offset = 0;
   for (size_t i = 0;
        i < table->key_info[table->s->primary_key].user_defined_key_parts; i++) {
-    key_len += table->key_info[table->s->primary_key].key_part[i].length;
+    key_str.append(gen_bit_string(
+        key, offset,
+        table->key_info[table->s->primary_key].key_part[i].length));
   }
 
-  // copy key to string
-  std::string new_key(reinterpret_cast<char *>(const_cast<uchar *>(key)),
-                      key_len);
-  std::string value;
+  DBUG_PRINT("KVDK", ("index_read_map %s ", key_str.data()));
+  if (kv->exists(key_str) != pmem::kv::status::OK) {
+    return HA_ERR_KEY_NOT_FOUND;
+  } else {
+    DBUG_PRINT("KVDK", ("index_read_map %ld", table->s->reclength));
 
-  // find value in table
-  pmem::kv::status s = kv->get(create_key(active_table, new_key), &value);
-  assert(s == pmem::kv::status::OK);
+    std::string value;
+    value.resize(table->s->reclength);
+    s = kv->get(key_str, &value);
+    ASSERT(s == pmem::kv::status::OK, s);
 
-  memcpy(ret, value.data(), table->s->reclength);
+    memcpy(ret, value.data(), table->s->reclength);
+  }
 
   return 0;
 }
@@ -700,9 +722,10 @@ int ha_kvpmem::index_next(uchar *ret) {
   return rnd_next(ret);
 }
 
-int ha_kvpmem::index_init(uint, bool) {
+int ha_kvpmem::index_init(uint idx, bool) {
   DBUG_TRACE;
   DBUG_PRINT("KVDK", ("index_init"));
+  active_index = idx;
   return rnd_init(true);
 }
 
@@ -1167,7 +1190,8 @@ int ha_kvpmem::create(const char *table_name, TABLE *, HA_CREATE_INFO *,
 
   std::string table_name_str = std::string(table_name);
 
-  // use mutex to protect table creation since table num has to be saved to PMEM
+  // use mutex to protect table creation since table num has to be saved to
+  // PMEM
   table_create_mutex.lock();
 
   insert_table_markers(&table_name_str);
