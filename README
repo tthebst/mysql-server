@@ -72,8 +72,7 @@ CREATE DATABASE t2; USE t2;
 CREATE TABLE shop (
     article_id INT UNSIGNED,
     price   INT UNSIGNED NOT NULL,
-    used   INT UNSIGNED NOT NULL,
-    primary key (article_id))
+    used   INT UNSIGNED NOT NULL)
     ENGINE = KVPMEM;
 
 INSERT INTO shop VALUES (1,3,0),(2,4,1),(3,4,1),(4,5,0),(5,10,0),(444,5,0),(23442,10,0); 
@@ -84,7 +83,7 @@ INSERT INTO shop VALUES (1,3,0);
 SELECT * FROM shop;
 DELETE FROM shop WHERE used=1;
 
-CREATE TABLE shopp (
+CREATE TABLE shoppp (
     article_id INT UNSIGNED,
     price   INT UNSIGNED NOT NULL,
     used   INT UNSIGNED NOT NULL,
@@ -92,20 +91,21 @@ CREATE TABLE shopp (
     ENGINE = KVPMEM;
 
 
-INSERT INTO shopp VALUES (1,3,0),(2,4,0),(3,4,0),(4,5,0),(5,10,0);SELECT * FROM shopp;
+INSERT INTO shoppp VALUES (1,3,0),(2,4,0),(3,4,0),(4,5,0),(5,10,0);SELECT * FROM shopp;
 
+SELECT * FROM shop WHERE price= (SELECT MAX(price) FROM shop);
 SELECT * FROM shop,shopp WHERE shop.article_id=shopp.article_id;
 
 # TPCC
 
 ```
 docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest init
-docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w1 load
-docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w1 -l100 -c1 run 
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w2 load
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w2 -l100 -c1 run 
 
-docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest2 init
-docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest2 -w1 load
-docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest2 -w1 -l100 -c1 run 
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest3 init
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest3 -w2 load
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest3 -w2 -l100 -c1 run 
 
 ```
 
@@ -155,6 +155,20 @@ docker run --network host --cap-add=sys_nice -v /mnt/local2/tim/my-kvpmem.cnf:/e
   SELECT d_next_o_id FROM district WHERE d_id = 1 AND d_w_id = 1;
   SELECT DISTINCT ol_i_id FROM order_line WHERE ol_w_id = 1 AND ol_d_id = 1 AND ol_o_id < 1 AND ol_o_id >= (1 - 20);
   SELECT count(*) FROM stock WHERE s_w_id = 1 AND s_i_id = 1 AND s_quantity < 1;
+
+STOCK LEVEL:
+SELECT DISTINCT ol_i_id FROM order_line WHERE ol_w_id = 1 AND ol_d_id = 2 AND ol_o_id < 10 AND ol_o_id >= (10 - 50);
+SELECT d_next_o_id FROM district WHERE d_id = 1 AND d_w_id = 1;
+SELECT count(*) FROM stock WHERE s_w_id = 1 AND s_i_id = 4 AND s_quantity < 1000000;
+
+ORDER STATUS
+
+SELECT count(c_id) FROM customer WHERE c_w_id = 1 AND c_d_id = 1 AND c_last = 1;
+SELECT c_balance, c_first, c_middle, c_last  FROM customer WHERE c_w_id = 1 AND c_d_id = 1 AND c_last = 1 ORDER BY c_first;
+SELECT c_balance, c_first, c_middle, c_last FROM customer WHERE c_w_id = 1 AND c_d_id = 1 AND c_id = 1;
+SELECT o_id, o_entry_d, COALESCE(o_carrier_id,0) FROM orders WHERE o_w_id = 1 AND o_d_id = 1 AND o_c_id = 1 AND o_id = (SELECT MAX(o_id) FROM orders WHERE o_w_id = 1 AND o_d_id = 1 AND o_c_id = 1);
+SELECT ol_i_id, ol_supply_w_id, ol_quantity, ol_amount,ol_delivery_d  order_line WHERE ol_w_id = 1 AND ol_d_id = 1 	AND ol_o_id = 1
+
 
 
    SELECT c_discount, c_last, c_credit, w_tax FROM customer, warehouse WHERE w_id = 10  AND c_w_id = w_id  AND c_d_id = 10  AND c_id = 20
