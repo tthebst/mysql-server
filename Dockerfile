@@ -1,5 +1,5 @@
 #changed from debian to ubuntu
-FROM debian:bullseye-slim
+FROM debian:bookworm
 
 # add our user and group first to make sure their IDs get assigned consistently, regardless of whatever dependencies get added
 RUN groupadd -r mysql && useradd -r -g mysql mysql
@@ -81,12 +81,28 @@ RUN mkdir /usr/local/mysql \
 # the "/var/lib/mysql" stuff here is because the mysql-server postinst doesn't have an explicit way to disable the mysql_install_db codepath besides having a database already "configured" (ie, stuff in /var/lib/mysql/mysql)
 # also, we set debconf keys to make APT a little quieter
 RUN apt-get update \
+    #&& apt install -y git bash-completion systemd make clang-format-9 pkg-config g++ autoconf libtool asciidoctor libkmod-dev libudev-dev uuid-dev libjson-c-dev libkeyutils-dev pandoc libhwloc-dev libgflags-dev libtext-diff-perl \
     && apt-get install -y libhwloc-dev libpmem-dev librpmem-dev libpmemblk-dev libpmemlog-dev libpmemobj-dev libpmempool-dev libpmempool-dev\
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /var/lib/mysql && mkdir -p /var/lib/mysql /var/run/mysqld \
     && chown -R mysql:mysql /var/lib/mysql /var/run/mysqld \
     # ensure that /var/run/mysqld (used for socket and lock files) is writable regardless of the UID our mysqld instance ends up having at runtime
     && chmod 1777 /var/run/mysqld /var/lib/mysql
+
+# RUN git clone https://github.com/pmem/ndctl.git \
+#     && cd ndctl \
+#     && git checkout v70.1 \
+#     && ./autogen.sh \
+#     && ./configure CFLAGS='-g -O2' --prefix=/usr --sysconfdir=/etc --libdir=/usr/lib \
+#     && make \
+#     &&  make install
+
+# RUN git clone https://github.com/pmem/pmdk.git  \
+#     && cd pmdk \
+#     && git checkout 1.11.1 \
+#     && make \
+#     &&  make install prefix=/usr
+
 
 VOLUME /var/lib/mysql
 
@@ -106,9 +122,6 @@ RUN ln -s usr/local/bin/docker-entrypoint.sh /entrypoint.sh # backwards compat
 # make script executubale 
 RUN chmod 777 /usr/local/bin/docker-entrypoint.sh \
     && ln -s /usr/local/bin/docker-entrypoint.sh /
-
-ADD "https://www.random.org/cgi-bin/randbyte?nbytes=10&format=h" skipcache
-RUN which mysqld
 
 ENV PATH="/usr/local/mysql/bin/:${PATH}"
 

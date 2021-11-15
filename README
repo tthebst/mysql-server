@@ -22,16 +22,14 @@ MySQL is brought to you by the MySQL team at Oracle.
 
 # build
 
+mkdir build && cd build
 cmake .. -DCMAKE_INSTALL_PREFIX=/out -DCPACK_MONOLITHIC_INSTALL=1 -DWITH_BOOST=/usr/local -DWITH_KVPMEM_STORAGE_ENGINE=1
 
 
-# run
-docker build -t mysql-test . && docker rm $(docker stop $(docker ps -a -q --filter name=mysql8 --format="{{.ID}}")) && docker run --network host --cap-add=sys_nice -v $HOME/my-kvpmem.cnf:/etc/mysql/my.cnf -v /pmem:/pmem -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_USER=mysql -e MYSQL_PASSWORD=secret --name mysql8 -d mysql-test mysqld --default-authentication-plugin=mysql_native_password
 
 # connect 
 
 docker run -it --network host --rm mysql bash -c 'mysql  --user=root --password=secret --host=127.0.0.1' -p
-
 
 # DEBUG
 

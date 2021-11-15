@@ -3,7 +3,7 @@
 # go to kvdk
 cd ./extra/kvdk
 
-git submodule update .
+git submodule update --remote --merge . 
 
 mkdir -p build && cd build && rm -rf *
 

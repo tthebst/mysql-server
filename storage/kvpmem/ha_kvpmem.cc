@@ -93,13 +93,17 @@
 */
 
 #include "storage/kvpmem/ha_kvpmem.h"
-
+#include <atomic>
+#include <bitset>
+#include <memory>
 #include "engine.hpp"
 #include "my_dbug.h"
 #include "mysql/plugin.h"
 #include "namespace.hpp"
+
 #include "sql/sql_class.h"
 #include "sql/sql_plugin.h"
+#include "sql/table.h"
 #include "typelib.h"
 
 static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
@@ -107,6 +111,17 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
 
 handlerton *kvpmem_hton;
 kvdk::Engine *engine = nullptr;
+std::mutex table_create_mutex;
+static char *kvpmem_data_file_path = nullptr;
+
+#define ASSERT(condition, status)                                             \
+  {                                                                           \
+    if (!(condition)) {                                                       \
+      std::cout << "ASSERT FAILED: " << #condition << " STATUS: " << (status) \
+                << " @ " << __FILE__ << " (" << __LINE__ << ")" << std::endl; \
+      assert(condition);                                                      \
+    }                                                                         \
+  }
 
 /* Interface to mysqld, to check system tables supported by SE */
 static bool kvpmem_is_supported_system_table(const char *db,
@@ -115,6 +130,21 @@ static bool kvpmem_is_supported_system_table(const char *db,
 
 KVpmem_share::KVpmem_share() { thr_lock_init(&lock); }
 
+static int kvpmem_commit(handlerton *hton, /*!< in: InnoDB handlerton */
+                         THD *,            /*!< in: MySQL thread handle of the
+                                              user for whom the transaction should
+                                              be committed */
+                         bool)             /*!< in: true - commit transaction
+                                                      false - the current SQL statement
+                                                      ended */
+{
+  DBUG_TRACE;
+  assert(hton == nullptr);
+  DBUG_PRINT("KVDK", ("commit write batch"));
+
+  return 0;
+}
+
 static int kvpmem_init_func(void *p) {
   DBUG_TRACE;
 
@@ -122,9 +152,85 @@ static int kvpmem_init_func(void *p) {
   kvpmem_hton->state = SHOW_OPTION_YES;
   kvpmem_hton->create = kvpmem_create_handler;
   kvpmem_hton->flags = HTON_CAN_RECREATE;
+  kvpmem_hton->commit = kvpmem_commit;
   kvpmem_hton->is_supported_system_table = kvpmem_is_supported_system_table;
 
   return 0;
+}
+
+static std::string tablename{"a"};
+static std::string key_begin{"a"};
+static std::string key_end{"zzz"};
+static std::string value{std::to_string(1)};
+// insert element into table that marks first and last element
+static void insert_table_markers(std::string table_name) {
+  assert(engine != nullptr);
+  kvdk::Status s;
+
+  tablename = table_name;
+  // pmem::obj::string_view table_name_sv{tablename};
+  // pmem::obj::string_view key_end_sv{key_end};
+  // pmem::obj::string_view key_begin_sv{key_begin};
+  // pmem::obj::string_view value_sv{value};
+
+  DBUG_PRINT("KVDK", ("insert_table_markers %ld %ld %ld ", tablename.size(),
+                      key_begin.size(), std::to_string(1).size()));
+  DBUG_PRINT("KVDK", ("insert_table_markers stat %s %s %s ", tablename.c_str(),
+                      key_begin.c_str(), std::to_string(1).c_str()));
+
+  s = engine->SSet(tablename, key_begin, value);
+  ASSERT(s == kvdk::Status::Ok, (int)s);
+  s = engine->SSet(tablename, key_end, value);
+  ASSERT(s == kvdk::Status::Ok, (int)s);
+  return;
+}
+
+std::string gen_bit_string(const uchar *key, uint64_t key_offset,
+                           uint64_t key_length) {
+  switch (key_length) {
+    case 1:
+      int8_t key_num8;
+      memcpy(&key_num8, key + key_offset, key_length);
+      return std::bitset<8>(key_num8).to_string();
+      break;
+    case 2:
+      int16_t key_num16;
+      memcpy(&key_num16, key + key_offset, key_length);
+      return std::bitset<16>(key_num16).to_string();
+      break;
+    case 3:
+      int32_t key_num24;
+      memcpy(&key_num24, key + key_offset, key_length);
+      return std::bitset<24>(key_num24).to_string();
+      break;
+    case 4:
+      int64_t key_num32;
+      memcpy(&key_num32, key + key_offset, key_length);
+      return std::bitset<32>(key_num32).to_string();
+      break;
+    case 8:
+      int64_t key_num64;
+      memcpy(&key_num64, key + key_offset, key_length);
+      return std::bitset<64>(key_num64).to_string();
+      break;
+
+    default:
+      DBUG_PRINT("KVDK", ("gen_bit_string invalid primary key type"));
+      assert(false);
+      break;
+  }
+}
+
+// create primary key
+std::string create_primary_key(const uchar *row, KEY *key) {
+  std::string key_str = std::string();
+
+  for (size_t i = 0; i < key->user_defined_key_parts; i++) {
+    key_str.append(
+        gen_bit_string(row, key->key_part[i].offset, key->key_part[i].length));
+  }
+
+  return key_str;
 }
 
 /**
@@ -153,12 +259,7 @@ err:
 }
 
 static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
-                                       bool, MEM_ROOT *mem_root) {
-  return new (mem_root) ha_kvpmem(hton, table);
-}
-
-ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
-    : handler(hton, table_arg) {
+                                      bool, MEM_ROOT *mem_root) {
   kvdk::Status status;
   // first time using the engine. Create a handler
   if (engine == nullptr) {
@@ -168,25 +269,38 @@ ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
       // Approximately 10MB /mnt/pmem0/ space is needed.
       // Please refer to "Configuration" section in user documentation for
       // details.
-      engine_configs.pmem_file_size = (1ull << 22);
+      engine_configs.pmem_file_size = 40 * 1024UL * 1024UL * 1024UL;
       engine_configs.pmem_segment_blocks = (1ull << 8);
       engine_configs.hash_bucket_num = (1ull << 10);
+      engine_configs.log_level = kvdk::LogLevel::Debug;
     }
     // The KVDK instance is mounted as a directory
     // /mnt/pmem0/tutorial_kvdk_example.
     // Modify this path if necessary.
-    std::string engine_path{"/pmem/tutorial_kvdk_example"};
+    std::string engine_path{kvpmem_data_file_path};
 
     // Purge old KVDK instance
     system(std::string{"rm -rf " + engine_path + "\n"}.c_str());
 
     status = kvdk::Engine::Open(engine_path, &engine, engine_configs, stdout);
     assert(status == kvdk::Status::Ok);
-    DBUG_PRINT("KVDK", ("Successfully created KVDK engine"));
+    DBUG_PRINT("KVDK",
+               ("Successfully created KVDK engine %s", kvpmem_data_file_path));
+    {
+      std::string s1{"hi"};
+      std::string s2{"hi"};
+      std::string s3{"hi"};
+      status = engine->SSet(s1, s2, s3);
+      ASSERT(status == kvdk::Status::Ok, (int)status);
+    }
   }
 
   // Initialize a KVDK instance.
+  return new (mem_root) ha_kvpmem(hton, table);
 }
+
+ha_kvpmem::ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg)
+    : handler(hton, table_arg), m_int_table_flags() {}
 
 /*
   List of all system tables specific to the SE.
@@ -252,6 +366,47 @@ int ha_kvpmem::open(const char *, int, uint, const dd::Table *) {
   if (!(share = get_share())) return 1;
   thr_lock_data_init(&share->lock, &lock, nullptr);
 
+  auto iter = engine->NewSortedIterator(active_table);
+  read_iterators[active_table] = iter;
+
+  // get current active index
+  // create read iterator
+  kv_key_length = 0;
+  if (table->s->is_missing_primary_key()) {
+    rnd_init(true);
+
+    iter->Seek(active_table + "_zzz");
+
+    auto last_key = iter->Key();
+
+    DBUG_PRINT("KVDK", ("OPEN table %s", last_key.data()));
+    if (last_key != active_table + "_") {
+      DBUG_PRINT("KVDK", ("OPEN table last idx no prim %s %s", last_key.data(),
+                          last_key.substr(active_table.size() + 1).data()));
+
+      std::bitset<sizeof(unsigned long) * 8> last_idx_bs{
+          last_key.substr(active_table.size() + 1)};
+
+      unsigned long last_idx = last_idx_bs.to_ulong();
+      DBUG_PRINT("KVDK", ("OPEN table last idx no prim %ld", last_idx));
+
+      share->index_count = last_idx + 1;
+      DBUG_PRINT("KVDK", ("OPEN table last idx no prim %ld",
+                          share->index_count.load()));
+    }
+
+    // delete read iterator
+    rnd_end();
+  } else {
+    // get size of primary key
+    for (size_t i = 0;
+         i < table->key_info[table->s->primary_key].user_defined_key_parts;
+         i++) {
+      kv_key_length +=
+          table->key_info[table->s->primary_key].key_part[i].length;
+    }
+  }
+
   return 0;
 }
 
@@ -305,14 +460,35 @@ int ha_kvpmem::close(void) {
   sql_insert.cc, sql_select.cc, sql_table.cc, sql_udf.cc and sql_update.cc
 */
 
-int ha_kvpmem::write_row(uchar *) {
+int ha_kvpmem::write_row(uchar *row) {
   DBUG_TRACE;
-  /*
-    KVpmem of a successful write_row. We don't store the data
-    anywhere; they are thrown away. A real implementation will
-    probably need to do something with 'buf'. We report a success
-    here, to pretend that the insert was successful.
-  */
+
+  // need to create stringview with correct size becuase row is not null
+  std::string sv(reinterpret_cast<char *>(row), table->s->reclength);
+  std::string key_str;
+
+  // support no primary key. If no primary key is specified a atomic variable is
+  // used as an index. This atomic variable is shared across a table and is
+  // increased on each insert
+
+  if (table->s->is_missing_primary_key()) {
+    auto new_idx = share->index_count.fetch_add(1, std::memory_order_relaxed);
+    key_str = std::bitset<64>(new_idx).to_string();
+    // append used index to mysql row such mysql row stores the index
+    sv.append(std::bitset<64>(new_idx).to_string());
+  } else {
+    key_str = create_primary_key(row, &table->key_info[table->s->primary_key]);
+  }
+
+  // check uniqueness constraint. If already exists in table uniquenss is
+  if (engine->SGet(active_table, key_str, NULL) == kvdk::Status::NotFound) {
+    DBUG_PRINT("KVDK", ("write_row %s duplicate", key_str.data()));
+    return HA_ERR_FOUND_DUPP_UNIQUE;
+  }
+
+  // store row in KV
+  kvdk::Status s = engine->SSet(active_table, key_str, sv);
+  ASSERT(s == kvdk::Status::Ok, (int)s);
   return 0;
 }
 
@@ -339,9 +515,58 @@ int ha_kvpmem::write_row(uchar *) {
   @see
   sql_select.cc, sql_acl.cc, sql_update.cc and sql_insert.cc
 */
-int ha_kvpmem::update_row(const uchar *, uchar *) {
+int ha_kvpmem::update_row(const uchar *old_row, uchar *new_row) {
   DBUG_TRACE;
-  return HA_ERR_WRONG_COMMAND;
+
+  DBUG_PRINT("KVDK", ("UPDATE ROW %s", active_table.c_str()));
+  kvdk::Status s;
+
+  // prepare new row to be inserted
+  std::string sv(reinterpret_cast<char *>(new_row), table->s->reclength);
+
+  // handle case where no primary key specified. In that case a write iterator
+  // is used to update row and index is read from mysql row passed by argument
+  if (table->s->is_missing_primary_key()) {
+    // get old key from mysql row data
+
+    auto curr_key = read_iterators[active_table]->Key();
+
+    std::string value;
+    s = engine->SGet(active_table, curr_key, &value);
+    ASSERT(s == kvdk::Status::Ok, (int)s);
+    memcpy(const_cast<char *>(value.data()), new_row, table->s->reclength);
+    s = engine->SSet(active_table, curr_key, value);
+    ASSERT(s == kvdk::Status::Ok, (int)s);
+    read_iterators[active_table]->Seek(curr_key);
+
+  } else {
+    // primary key of old row that should be replaced
+
+    auto old_primary_key = create_primary_key(
+        const_cast<uchar *>(old_row), &table->key_info[table->s->primary_key]);
+
+    // new primary key based on new mysql row
+    auto new_primary_key =
+        create_primary_key(new_row, &table->key_info[table->s->primary_key]);
+
+    // if keys are same it means none of the fields that are part of the primary
+    // keys are updated. We dont need to change the internal KV index
+    if (new_primary_key == old_primary_key) {
+      s = engine->SSet(active_table, old_primary_key, sv);
+      ASSERT(s == kvdk::Status::Ok, (int)s);
+    } else {
+      // move read iterator to element before this element and store key. This
+      // is needed to know where to move iterator after update
+
+      s = engine->SDelete(active_table, old_primary_key);
+      ASSERT(s == kvdk::Status::Ok, (int)s);
+      s = engine->SSet(active_table, new_primary_key, sv);
+      ASSERT(s == kvdk::Status::Ok, (int)s);
+    }
+  }
+
+  DBUG_PRINT("KVDK", ("WRITE ROW END"));
+  return 0;
 }
 
 /**
@@ -364,9 +589,34 @@ int ha_kvpmem::update_row(const uchar *, uchar *) {
   sql_acl.cc, sql_udf.cc, sql_delete.cc, sql_insert.cc and sql_select.cc
 */
 
-int ha_kvpmem::delete_row(const uchar *) {
+int ha_kvpmem::delete_row(const uchar *old_row) {
   DBUG_TRACE;
-  return HA_ERR_WRONG_COMMAND;
+  DBUG_PRINT("KVDK", ("DELETE ROW %s", active_table.c_str()));
+  kvdk::Status s;
+
+  // handle case where no primary key specified
+  if (table->s->is_missing_primary_key()) {
+    // read index from mysql row
+    std::string old_idx;
+    old_idx.reserve(sizeof(share->index_count) * 8);
+    memcpy(const_cast<char *>(old_idx.data()), old_row + table->s->reclength,
+           sizeof(share->index_count) * 8);
+
+    if (engine->SGet(active_table, old_idx, nullptr) == kvdk::Status::Ok) {
+      s = engine->SDelete(active_table, old_idx);
+      ASSERT(s == kvdk::Status::Ok, (int)s);
+    }
+  } else {
+    // KV internal index of row to delete
+
+    auto old_primary_key = create_primary_key(
+        const_cast<uchar *>(old_row), &table->key_info[table->s->primary_key]);
+    s = engine->SDelete(active_table, old_primary_key);
+    ASSERT(s == kvdk::Status::Ok, (int)s);
+  }
+
+  DBUG_PRINT("KVDK", ("DELETE ROW END"));
+  return 0;
 }
 
 /**
@@ -376,24 +626,109 @@ int ha_kvpmem::delete_row(const uchar *) {
   index.
 */
 
-int ha_kvpmem::index_read_map(uchar *, const uchar *, key_part_map,
-                               enum ha_rkey_function) {
-  int rc;
+int ha_kvpmem::index_read_map(uchar *ret, const uchar *key, key_part_map map,
+                              enum ha_rkey_function) {
   DBUG_TRACE;
-  rc = HA_ERR_WRONG_COMMAND;
-  return rc;
-}
+  DBUG_PRINT("KVDK", ("index_read_map %s %d %ld %ld %ld", active_table.data(),
+                      key == NULL, active_table.size() + 1 + kv_key_length * 8,
+                      kv_key_length, active_table.size()));
+  // kvdk::Status s;
 
+  if (key == NULL) {
+    DBUG_PRINT("KVDK", ("index_read_map KEY NULLS "));
+    rnd_init(true);
+    return 0;
+  }
+
+  // create KV internal index
+  std::string key_str;
+  key_str.reserve(kv_key_length * 8);
+
+  size_t offset = 0;
+  size_t key_part_elems = 0;
+  for (size_t i = 0;
+       i < table->key_info[table->s->primary_key].user_defined_key_parts; i++) {
+    // key part is present in *key we should append it to our internal index
+    // key. If not we will apppend zeros such that it is of lower
+    // lexicogrpahical order that the first key
+    // NOTE: Only key prefixes are supported.
+    if (map) {
+      key_str.append(gen_bit_string(
+          key, offset,
+          table->key_info[table->s->primary_key].key_part[i].length));
+      offset += table->key_info[table->s->primary_key].key_part[i].length;
+      map >>= 1;
+      key_part_elems++;
+    } else {
+      // pad with zeros
+      key_str.append(
+          table->key_info[table->s->primary_key].key_part[i].length * 8, '0');
+    }
+  }
+
+  DBUG_PRINT("KVDK",
+             ("index_read_map %s %ld %ud ", key_str.data(), key_part_elems,
+              table->key_info[table->s->primary_key].user_defined_key_parts));
+
+  // Seek to first index with specified index prefix
+  if (key_part_elems !=
+      table->key_info[table->s->primary_key].user_defined_key_parts) {
+    DBUG_PRINT("KVDK", ("index_read_map only prefix prinmary"));
+    // move to first key
+
+    read_iterators[active_table]->SeekToFirst();
+
+    // move forward to first elemnt of index prefix
+    {
+      while (read_iterators[active_table]->Key() < key_str) {
+        read_iterators[active_table]->Next();
+      }
+    }
+
+    auto value = read_iterators[active_table]->Value();
+    memcpy(ret, value.data(), table->s->reclength);
+    return 0;
+  }
+
+  read_iterators[active_table]->Seek(key_str);
+  // read value if exists
+  if (!read_iterators[active_table]->Valid()) {
+    DBUG_PRINT("KVDK", ("index_read_map: NOT FOUND "));
+    return HA_ERR_KEY_NOT_FOUND;
+  } else {
+    DBUG_PRINT("KVDK", ("index_read_map %ld", table->s->reclength));
+
+    std::string value;
+    value.resize(table->s->reclength);
+    value = read_iterators[active_table]->Value();
+
+    memcpy(ret, value.data(), table->s->reclength);
+  }
+
+  return 0;
+}
 /**
   @brief
   Used to read forward through the index.
 */
 
-int ha_kvpmem::index_next(uchar *) {
-  int rc;
+int ha_kvpmem::index_next(uchar *ret) {
   DBUG_TRACE;
-  rc = HA_ERR_WRONG_COMMAND;
-  return rc;
+  // DBUG_PRINT("KVDK", ("index_next"));
+  return rnd_next(ret);
+}
+
+int ha_kvpmem::index_init(uint idx, bool) {
+  DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("index_init"));
+  active_index = idx;
+  return rnd_init(true);
+}
+
+int ha_kvpmem::index_end() {
+  DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("index_end"));
+  return rnd_end();
 }
 
 /**
@@ -458,14 +793,47 @@ int ha_kvpmem::index_last(uchar *) {
 */
 int ha_kvpmem::rnd_init(bool) {
   DBUG_TRACE;
+
+  DBUG_PRINT("KVDK", ("rnd_init:"));
+
+  // create new read iterator if not yet
+  if (read_iterators.find(active_table) == read_iterators.end()) {
+    DBUG_PRINT("KVDK", ("rnd_init: new read_it"));
+    read_iterators[active_table] = engine->NewSortedIterator(active_table);
+  } else {
+    // handling subquery. This means rnd_init is called second time before
+    // rnd_end is called -> store current location such that we can continue
+    // were left of ater handling subquery
+    DBUG_PRINT("KVDK", ("rnd_init: new subquery"));
+    share->subquery_stack_map[thd_get_thread_id(current_thd)].push_back(
+        read_iterators[active_table]->Key());
+    // share->subquery_stack.push_back(read_it->key().get_value());
+  }
+
+  // seek to first element of table
+  read_iterators[active_table]->Seek(" ");
+  assert(read_iterators[active_table]->Valid());
   return 0;
 }
 
 int ha_kvpmem::rnd_end() {
   DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("rnd_end"));
+
+  // delete read iterator if ended read query
+  if (share->subquery_stack_map[thd_get_thread_id(current_thd)].size() == 0) {
+    read_iterators.erase(active_table);
+  } else {
+    DBUG_PRINT("KVDK", ("rnd_end pop"));
+    read_iterators[active_table]->Seek(
+        share->subquery_stack_map[thd_get_thread_id(current_thd)].back());
+    share->subquery_stack_map[thd_get_thread_id(current_thd)].pop_back();
+  }
+
+  assert(read_iterators[active_table]->Valid());
+
   return 0;
 }
-
 /**
   @brief
   This is called for each row of the table scan. When you run out of records
@@ -481,11 +849,26 @@ int ha_kvpmem::rnd_end() {
   filesort.cc, records.cc, sql_handler.cc, sql_select.cc, sql_table.cc and
   sql_update.cc
 */
-int ha_kvpmem::rnd_next(uchar *) {
-  int rc;
+int ha_kvpmem::rnd_next(uchar *ret) {
   DBUG_TRACE;
-  rc = HA_ERR_END_OF_FILE;
-  return rc;
+  // DBUG_PRINT("KVDK", ("rnd_next: %s %s",
+  // active_table.c_str(),table->s->table_name.str));
+  read_iterators[active_table]->Next();
+  if (read_iterators[active_table]->Valid()) {
+    /* read a key */
+    auto key = read_iterators[active_table]->Key();
+    if (key == "zzz") {
+      DBUG_PRINT("KVDK", ("rnd_next: at end of table"));
+      return HA_ERR_END_OF_FILE;
+    }
+
+    auto value = read_iterators[active_table]->Value();
+    memcpy(ret, value.data(), table->s->reclength);
+  } else {
+    DBUG_PRINT("KVDK", ("rnd_next: no next"));
+    return HA_ERR_END_OF_FILE;
+  }
+  return 0;
 }
 
 /**
@@ -509,7 +892,10 @@ int ha_kvpmem::rnd_next(uchar *) {
   @see
   filesort.cc, sql_select.cc, sql_delete.cc and sql_update.cc
 */
-void ha_kvpmem::position(const uchar *) { DBUG_TRACE; }
+void ha_kvpmem::position(const uchar *) {
+  DBUG_TRACE;
+  DBUG_PRINT("KVDK", ("position"));
+}
 
 /**
   @brief
@@ -674,7 +1060,7 @@ int ha_kvpmem::external_lock(THD *, int) {
   get_lock_data() in lock.cc
 */
 THR_LOCK_DATA **ha_kvpmem::store_lock(THD *, THR_LOCK_DATA **to,
-                                       enum thr_lock_type lock_type) {
+                                      enum thr_lock_type lock_type) {
   if (lock_type != TL_IGNORE && lock.type == TL_UNLOCK) lock.type = lock_type;
   *to++ = &lock;
   return to;
@@ -720,7 +1106,7 @@ int ha_kvpmem::delete_table(const char *, const dd::Table *) {
   mysql_rename_table() in sql_table.cc
 */
 int ha_kvpmem::rename_table(const char *, const char *, const dd::Table *,
-                             dd::Table *) {
+                            dd::Table *) {
   DBUG_TRACE;
   return HA_ERR_WRONG_COMMAND;
 }
@@ -768,8 +1154,8 @@ static MYSQL_THDVAR_UINT(create_count_thdvar, 0, nullptr, nullptr, nullptr, 0,
   ha_create_table() in handle.cc
 */
 
-int ha_kvpmem::create(const char *name, TABLE *, HA_CREATE_INFO *,
-                       dd::Table *) {
+int ha_kvpmem::create(const char *table_name, TABLE *, HA_CREATE_INFO *,
+                      dd::Table *) {
   DBUG_TRACE;
   /*
     This is not implemented but we want someone to be able to see that it
@@ -782,14 +1168,32 @@ int ha_kvpmem::create(const char *name, TABLE *, HA_CREATE_INFO *,
   THD *thd = ha_thd();
   char *buf = (char *)my_malloc(PSI_NOT_INSTRUMENTED, SHOW_VAR_FUNC_BUFF_SIZE,
                                 MYF(MY_FAE));
-  snprintf(buf, SHOW_VAR_FUNC_BUFF_SIZE, "Last creation '%s'", name);
+  snprintf(buf, SHOW_VAR_FUNC_BUFF_SIZE, "Last creation '%s'", table_name);
   THDVAR_SET(thd, last_create_thdvar, buf);
   my_free(buf);
 
   uint count = THDVAR(thd, create_count_thdvar) + 1;
   THDVAR_SET(thd, create_count_thdvar, &count);
 
+  // use mutex to protect table creation since table num has to be saved to
+  // PMEM
+  table_create_mutex.lock();
+
+  insert_table_markers(table_name);
+  table_create_mutex.unlock();
+
   return 0;
+}
+
+uint ha_kvpmem::max_supported_keys() const { return (1); }
+
+/** Get the table flags to use for the statement.
+ @return table flags */
+
+handler::Table_flags ha_kvpmem::table_flags() const {
+  handler::Table_flags flags = m_int_table_flags;
+
+  return (flags);
 }
 
 struct st_mysql_storage_engine kvpmem_storage_engine = {
@@ -852,6 +1256,12 @@ static MYSQL_THDVAR_LONGLONG(signed_longlong_thdvar, PLUGIN_VAR_RQCMDARG,
                              "LLONG_MIN..LLONG_MAX", nullptr, nullptr, -10,
                              LLONG_MIN, LLONG_MAX, 0);
 
+static MYSQL_SYSVAR_STR(data_file_path, kvpmem_data_file_path,
+                        PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY |
+                            PLUGIN_VAR_NOPERSIST,
+                        "Path to individual files and their sizes.", nullptr,
+                        nullptr, const_cast<char *>("csmap"));
+
 static SYS_VAR *kvpmem_system_variables[] = {
     MYSQL_SYSVAR(enum_var),
     MYSQL_SYSVAR(ulong_var),
@@ -860,6 +1270,7 @@ static SYS_VAR *kvpmem_system_variables[] = {
     MYSQL_SYSVAR(last_create_thdvar),
     MYSQL_SYSVAR(create_count_thdvar),
     MYSQL_SYSVAR(signed_int_var),
+    MYSQL_SYSVAR(data_file_path),
     MYSQL_SYSVAR(signed_int_thdvar),
     MYSQL_SYSVAR(signed_long_var),
     MYSQL_SYSVAR(signed_long_thdvar),

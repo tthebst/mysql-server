@@ -1,50 +1,44 @@
 /* Copyright (c) 2004, 2021, Oracle and/or its affiliates.
-
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License, version 2.0,
   as published by the Free Software Foundation.
-
   This program is also distributed with certain software (including
   but not limited to OpenSSL) that is licensed under separate terms,
   as designated in a particular file or component or in included license
   documentation.  The authors of MySQL hereby grant you an additional
   permission to link the program and your derivative works with the
   separately licensed software that they have included with MySQL.
-
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License, version 2.0, for more details.
-
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301  USA */
 
 /** @file ha_kvpmem.h
-
     @brief
   The ha_kvpmem engine is a stubbed storage engine for kvpmem purposes only;
   it does nothing at this point. Its purpose is to provide a source
   code illustration of how to begin writing new storage engines; see also
   /storage/kvpmem/ha_kvpmem.cc.
-
     @note
   Please read ha_kvpmem.cc before reading this file.
   Reminder: The kvpmem storage engine implements all methods that are
   *required* to be implemented. For a full list of all methods that you can
   implement, see handler.h.
-
    @see
   /sql/handler.h and /storage/kvpmem/ha_kvpmem.cc
 */
 
 #include <sys/types.h>
-
+#include <iostream>
 #include "engine.hpp"
 #include "my_base.h" /* ha_rows */
 #include "my_compiler.h"
-#include "my_inttypes.h"
 #include "namespace.hpp"
+
+#include "my_inttypes.h"
 #include "sql/handler.h" /* handler */
 #include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
 
@@ -55,6 +49,13 @@
 class KVpmem_share : public Handler_share {
  public:
   THR_LOCK lock;
+  // read iterator shared across handler instantiations
+
+  std::vector<pmem::obj::string_view> subquery_stack;
+  std::unordered_map<unsigned long, std::vector<std::string>>
+      subquery_stack_map;
+
+  std::atomic<unsigned long> index_count{0};
   KVpmem_share();
   ~KVpmem_share() override { thr_lock_delete(&lock); }
 };
@@ -63,9 +64,18 @@ class KVpmem_share : public Handler_share {
   Class definition for the storage engine
 */
 class ha_kvpmem : public handler {
+  std::string active_table;
+  long active_idx;
+  size_t kv_key_length;
+
+  std::unordered_map<std::string, std::shared_ptr<kvdk::Iterator>>
+      read_iterators;
   THR_LOCK_DATA lock;          ///< MySQL lock
   KVpmem_share *share;        ///< Shared lock info
   KVpmem_share *get_share();  ///< Get the share
+
+  /** Flags that specificy the handler instance (table) capability. */
+  Table_flags m_int_table_flags;
 
  public:
   ha_kvpmem(handlerton *hton, TABLE_SHARE *table_arg);
@@ -79,7 +89,6 @@ class ha_kvpmem : public handler {
   /**
     Replace key algorithm with one supported by SE, return the default key
     algorithm for SE if explicit key algorithm was not provided.
-
     @sa handler::adjust_index_algorithm().
   */
   enum ha_key_alg get_default_index_algorithm() const override {
@@ -93,20 +102,12 @@ class ha_kvpmem : public handler {
     This is a list of flags that indicate what functionality the storage engine
     implements. The current table flags are documented in handler.h
   */
-  ulonglong table_flags() const override {
-    /*
-      We are saying that this engine is just statement capable to have
-      an engine that can only handle statement-based logging. This is
-      used in testing.
-    */
-    return HA_BINLOG_STMT_CAPABLE;
-  }
+  Table_flags table_flags() const override;
 
   /** @brief
     This is a bitmap of flags that indicates how the storage engine
     implements indexes. The current index flags are documented in
     handler.h. If you do not implement indexes, just return zero here.
-
       @details
     part is the key part to check. First key part is 0.
     If all_parts is set, MySQL wants to know the flags for the combined
@@ -133,34 +134,31 @@ class ha_kvpmem : public handler {
     unireg.cc will call this to make sure that the storage engine can handle
     the data it is about to send. Return *real* limits of your storage engine
     here; MySQL will do min(your_limits, MySQL_limits) automatically.
-
       @details
     There is no need to implement ..._key_... methods if your engine doesn't
     support indexes.
    */
-  uint max_supported_keys() const override { return 0; }
+  uint max_supported_keys() const override;
 
   /** @brief
     unireg.cc will call this to make sure that the storage engine can handle
     the data it is about to send. Return *real* limits of your storage engine
     here; MySQL will do min(your_limits, MySQL_limits) automatically.
-
       @details
     There is no need to implement ..._key_... methods if your engine doesn't
     support indexes.
    */
-  uint max_supported_key_parts() const override { return 0; }
+  uint max_supported_key_parts() const override { return MAX_REF_PARTS; }
 
   /** @brief
     unireg.cc will call this to make sure that the storage engine can handle
     the data it is about to send. Return *real* limits of your storage engine
     here; MySQL will do min(your_limits, MySQL_limits) automatically.
-
       @details
     There is no need to implement ..._key_... methods if your engine doesn't
     support indexes.
    */
-  uint max_supported_key_length() const override { return 0; }
+  uint max_supported_key_length() const override { return 128; }
 
   /** @brief
     Called in test_quick_select to determine if indexes should be used.
@@ -178,7 +176,6 @@ class ha_kvpmem : public handler {
 
   /*
     Everything below are methods that we implement in ha_kvpmem.cc.
-
     Most of these methods are not obligatory, skip them and
     MySQL will treat them as not implemented
   */
@@ -241,6 +238,8 @@ class ha_kvpmem : public handler {
     skip it and and MySQL will treat it as not implemented.
   */
   int index_last(uchar *buf) override;
+  int index_end() override;
+  int index_init(uint idx, bool sorted) override;
 
   /** @brief
     Unlike index_init(), rnd_init() can be called two consecutive times

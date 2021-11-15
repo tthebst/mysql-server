@@ -1,3 +1,4 @@
 [submodule "storage/kvpmem/extra/kvdk"]
 	path = storage/kvpmem/extra/kvdk
 	url = https://github.com/pmem/kvdk
+	branch = main
