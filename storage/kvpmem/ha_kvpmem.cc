@@ -96,6 +96,7 @@
 #include <atomic>
 #include <bitset>
 #include <memory>
+#include <string>
 #include "engine.hpp"
 #include "my_dbug.h"
 #include "mysql/plugin.h"
@@ -269,10 +270,10 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
       // Approximately 10MB /mnt/pmem0/ space is needed.
       // Please refer to "Configuration" section in user documentation for
       // details.
-      engine_configs.pmem_file_size = 40 * 1024UL * 1024UL * 1024UL;
-      engine_configs.pmem_segment_blocks = (1ull << 8);
+      // engine_configs.pmem_file_size = 4 * 1024UL * 1024UL * 1024UL;
+      // engine_configs.pmem_segment_blocks = (1ull << 8);
+      engine_configs.pmem_file_size = 16 * 1024UL * 1024UL * 1024UL;
       engine_configs.hash_bucket_num = (1ull << 10);
-      engine_configs.log_level = kvdk::LogLevel::Debug;
     }
     // The KVDK instance is mounted as a directory
     // /mnt/pmem0/tutorial_kvdk_example.
@@ -283,13 +284,16 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
     system(std::string{"rm -rf " + engine_path + "\n"}.c_str());
 
     status = kvdk::Engine::Open(engine_path, &engine, engine_configs, stdout);
-    assert(status == kvdk::Status::Ok);
+    ASSERT(status == kvdk::Status::Ok, (int)status);
     DBUG_PRINT("KVDK",
                ("Successfully created KVDK engine %s", kvpmem_data_file_path));
     {
       std::string s1{"hi"};
       std::string s2{"hi"};
       std::string s3{"hi"};
+
+      pmem::obj::string_view s1_sv{s1};
+
       status = engine->SSet(s1, s2, s3);
       ASSERT(status == kvdk::Status::Ok, (int)status);
     }

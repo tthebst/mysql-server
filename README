@@ -22,9 +22,12 @@ MySQL is brought to you by the MySQL team at Oracle.
 
 # build
 
+cd storage/kvpmem
+bash update_kvdk.sh
+
+
 mkdir build && cd build
 cmake .. -DCMAKE_INSTALL_PREFIX=/out -DCPACK_MONOLITHIC_INSTALL=1 -DWITH_BOOST=/usr/local -DWITH_KVPMEM_STORAGE_ENGINE=1
-
 
 
 # connect 
