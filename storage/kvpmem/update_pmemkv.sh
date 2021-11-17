@@ -3,7 +3,7 @@
 # go to kvdk
 cd ./extra/pmemkv
 
-git submodule update .
+git submodule update --recursive --remote .
 
 mkdir -p build && cd build && rm -rf *
 

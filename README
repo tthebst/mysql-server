@@ -100,12 +100,46 @@ SELECT * FROM shop,shopp WHERE shop.article_id=shopp.article_id;
 
 ```
 docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest init
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w1 load
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w1 -l100 -c1 run 
+
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest init
 docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w2 load
 docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w2 -l100 -c1 run 
 
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest init
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w5 load
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w5 -l100 -c1 run 
+
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest init
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w10 load
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w10 -l100 -c1 run 
+
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest init
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w25 load
+docker run --network host --rm tthebst/tppc-bench:kvpmem -h127.0.0.1 -uroot -psecret -dtest -w25 -l100 -c1 run 
+
+===============
+
 docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest3 init
-docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest3 -w2 load
-docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest3 -w2 -l100 -c1 run 
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest3 -w1 load
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest3 -w1 -l100 -c1 run 
+
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest4 init
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest4 -w2 load
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest4 -w2 -l100 -c1 run 
+
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest5 init
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest5 -w5 load
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest5 -w5 -l100 -c1 run 
+
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest6 init
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest6 -w10 load
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest6 -w10 -l100 -c1 run 
+
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest7 init
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest7 -w125 load
+docker run --network host --rm tthebst/tppc-bench:innodb -h127.0.0.1 -uroot -psecret -dtest7 -w125 -l100 -c1 run 
 
 ```
 
