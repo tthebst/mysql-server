@@ -159,32 +159,29 @@ static int kvpmem_init_func(void *p) {
   return 0;
 }
 
-static std::string tablename{"a"};
-static std::string key_begin{"a"};
-static std::string key_end{"zzz"};
-static std::string value{std::to_string(1)};
-// insert element into table that marks first and last element
-static void insert_table_markers(std::string table_name) {
-  assert(engine != nullptr);
-  kvdk::Status s;
+// // insert element into table that marks first and last element
+// static void insert_table_markers(std::string table_name) {
+//   assert(engine != nullptr);
+//   kvdk::Status s;
 
-  tablename = table_name;
-  // pmem::obj::string_view table_name_sv{tablename};
-  // pmem::obj::string_view key_end_sv{key_end};
-  // pmem::obj::string_view key_begin_sv{key_begin};
-  // pmem::obj::string_view value_sv{value};
+//   tablename = table_name;
+//   // pmem::obj::string_view table_name_sv{tablename};
+//   // pmem::obj::string_view key_end_sv{key_end};
+//   // pmem::obj::string_view key_begin_sv{key_begin};
+//   // pmem::obj::string_view value_sv{value};
 
-  DBUG_PRINT("KVDK", ("insert_table_markers %ld %ld %ld ", tablename.size(),
-                      key_begin.size(), std::to_string(1).size()));
-  DBUG_PRINT("KVDK", ("insert_table_markers stat %s %s %s ", tablename.c_str(),
-                      key_begin.c_str(), std::to_string(1).c_str()));
+//   DBUG_PRINT("KVDK", ("insert_table_markers %ld %ld %ld ", tablename.size(),
+//                       key_begin.size(), std::to_string(1).size()));
+//   DBUG_PRINT("KVDK", ("insert_table_markers stat %s %s %s ",
+//   tablename.c_str(),
+//                       key_begin.c_str(), std::to_string(1).c_str()));
 
-  s = engine->SSet(tablename, key_begin, value);
-  ASSERT(s == kvdk::Status::Ok, (int)s);
-  s = engine->SSet(tablename, key_end, value);
-  ASSERT(s == kvdk::Status::Ok, (int)s);
-  return;
-}
+//   s = engine->SSet(tablename, key_begin, value);
+//   ASSERT(s == kvdk::Status::Ok, (int)s);
+//   s = engine->SSet(tablename, key_end, value);
+//   ASSERT(s == kvdk::Status::Ok, (int)s);
+//   return;
+// }
 
 std::string gen_bit_string(const uchar *key, uint64_t key_offset,
                            uint64_t key_length) {
@@ -274,6 +271,7 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
       // engine_configs.pmem_segment_blocks = (1ull << 8);
       engine_configs.pmem_file_size = 16 * 1024UL * 1024UL * 1024UL;
       engine_configs.hash_bucket_num = (1ull << 10);
+      engine_configs.log_level = kvdk::LogLevel::All;
     }
     // The KVDK instance is mounted as a directory
     // /mnt/pmem0/tutorial_kvdk_example.
@@ -287,16 +285,6 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
     ASSERT(status == kvdk::Status::Ok, (int)status);
     DBUG_PRINT("KVDK",
                ("Successfully created KVDK engine %s", kvpmem_data_file_path));
-    {
-      std::string s1{"hi"};
-      std::string s2{"hi"};
-      std::string s3{"hi"};
-
-      pmem::obj::string_view s1_sv{s1};
-
-      status = engine->SSet(s1, s2, s3);
-      ASSERT(status == kvdk::Status::Ok, (int)status);
-    }
   }
 
   // Initialize a KVDK instance.
@@ -364,14 +352,14 @@ static bool kvpmem_is_supported_system_table(const char *db,
   handler::ha_open() in handler.cc
 */
 
-int ha_kvpmem::open(const char *, int, uint, const dd::Table *) {
+int ha_kvpmem::open(const char *table_name, int, uint, const dd::Table *) {
   DBUG_TRACE;
+
+  // set new active table
+  active_table = table_name;
 
   if (!(share = get_share())) return 1;
   thr_lock_data_init(&share->lock, &lock, nullptr);
-
-  auto iter = engine->NewSortedIterator(active_table);
-  read_iterators[active_table] = iter;
 
   // get current active index
   // create read iterator
@@ -379,12 +367,11 @@ int ha_kvpmem::open(const char *, int, uint, const dd::Table *) {
   if (table->s->is_missing_primary_key()) {
     rnd_init(true);
 
-    iter->Seek(active_table + "_zzz");
+    read_iterators[active_table]->SeekToLast();
 
-    auto last_key = iter->Key();
-
-    DBUG_PRINT("KVDK", ("OPEN table %s", last_key.data()));
-    if (last_key != active_table + "_") {
+    if (read_iterators[active_table]->Valid() &&
+        read_iterators[active_table]->Key() != "") {
+      auto last_key = read_iterators[active_table]->Key();
       DBUG_PRINT("KVDK", ("OPEN table last idx no prim %s %s", last_key.data(),
                           last_key.substr(active_table.size() + 1).data()));
 
@@ -484,8 +471,9 @@ int ha_kvpmem::write_row(uchar *row) {
     key_str = create_primary_key(row, &table->key_info[table->s->primary_key]);
   }
 
+  std::string test;
   // check uniqueness constraint. If already exists in table uniquenss is
-  if (engine->SGet(active_table, key_str, NULL) == kvdk::Status::NotFound) {
+  if (engine->SGet(active_table, key_str, &test) != kvdk::Status::NotFound) {
     DBUG_PRINT("KVDK", ("write_row %s duplicate", key_str.data()));
     return HA_ERR_FOUND_DUPP_UNIQUE;
   }
@@ -606,7 +594,8 @@ int ha_kvpmem::delete_row(const uchar *old_row) {
     memcpy(const_cast<char *>(old_idx.data()), old_row + table->s->reclength,
            sizeof(share->index_count) * 8);
 
-    if (engine->SGet(active_table, old_idx, nullptr) == kvdk::Status::Ok) {
+    std::string dummy;
+    if (engine->SGet(active_table, old_idx, &dummy) == kvdk::Status::Ok) {
       s = engine->SDelete(active_table, old_idx);
       ASSERT(s == kvdk::Status::Ok, (int)s);
     }
@@ -798,7 +787,7 @@ int ha_kvpmem::index_last(uchar *) {
 int ha_kvpmem::rnd_init(bool) {
   DBUG_TRACE;
 
-  DBUG_PRINT("KVDK", ("rnd_init:"));
+  DBUG_PRINT("KVDK", ("rnd_init: %s", active_table.data()));
 
   // create new read iterator if not yet
   if (read_iterators.find(active_table) == read_iterators.end()) {
@@ -815,7 +804,7 @@ int ha_kvpmem::rnd_init(bool) {
   }
 
   // seek to first element of table
-  read_iterators[active_table]->Seek(" ");
+  read_iterators[active_table]->Seek("");
   assert(read_iterators[active_table]->Valid());
   return 0;
 }
@@ -833,8 +822,6 @@ int ha_kvpmem::rnd_end() {
         share->subquery_stack_map[thd_get_thread_id(current_thd)].back());
     share->subquery_stack_map[thd_get_thread_id(current_thd)].pop_back();
   }
-
-  assert(read_iterators[active_table]->Valid());
 
   return 0;
 }
@@ -1165,7 +1152,8 @@ int ha_kvpmem::create(const char *table_name, TABLE *, HA_CREATE_INFO *,
     This is not implemented but we want someone to be able to see that it
     works.
   */
-
+  DBUG_PRINT("KVDK", ("create: %s", table_name));
+  KVDKStatus s;
   /*
     It's just an kvpmem of THDVAR_SET() usage below.
   */
@@ -1183,7 +1171,8 @@ int ha_kvpmem::create(const char *table_name, TABLE *, HA_CREATE_INFO *,
   // PMEM
   table_create_mutex.lock();
 
-  insert_table_markers(table_name);
+  s = engine->SSet(table_name, "", "s");
+  ASSERT(s == kvdk::Status::Ok, (int)s);
   table_create_mutex.unlock();
 
   return 0;
