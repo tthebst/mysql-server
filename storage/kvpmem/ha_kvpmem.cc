@@ -464,6 +464,7 @@ int ha_kvpmem::write_row(uchar *row) {
 
   if (table->s->is_missing_primary_key()) {
     auto new_idx = share->index_count.fetch_add(1, std::memory_order_relaxed);
+
     key_str = std::bitset<64>(new_idx).to_string();
     // append used index to mysql row such mysql row stores the index
     sv.append(std::bitset<64>(new_idx).to_string());
@@ -593,6 +594,7 @@ int ha_kvpmem::delete_row(const uchar *old_row) {
     old_idx.reserve(sizeof(share->index_count) * 8);
     memcpy(const_cast<char *>(old_idx.data()), old_row + table->s->reclength,
            sizeof(share->index_count) * 8);
+    DBUG_PRINT("KVDK", ("DELETE ROW %s", old_idx.c_str()));
 
     std::string dummy;
     if (engine->SGet(active_table, old_idx, &dummy) == kvdk::Status::Ok) {
@@ -669,13 +671,10 @@ int ha_kvpmem::index_read_map(uchar *ret, const uchar *key, key_part_map map,
     DBUG_PRINT("KVDK", ("index_read_map only prefix prinmary"));
     // move to first key
 
-    read_iterators[active_table]->SeekToFirst();
+    read_iterators[active_table]->Seek(key_str);
 
-    // move forward to first elemnt of index prefix
-    {
-      while (read_iterators[active_table]->Key() < key_str) {
-        read_iterators[active_table]->Next();
-      }
+    if (!read_iterators[active_table]->Valid()) {
+      read_iterators[active_table]->Next();
     }
 
     auto value = read_iterators[active_table]->Value();
