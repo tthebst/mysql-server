@@ -52,6 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     numactl \
     libncursesw5-dev \
     libpmem1 librpmem1 libpmemblk1 libpmemlog1 libpmemobj1 libpmempool1 \
+    libhwloc-dev libpmem-dev librpmem-dev libpmemblk-dev libpmemlog-dev libpmemobj-dev libpmempool-dev libpmempool-dev \
     perl \
     # install "xz-utils" for .sql.xz docker-entrypoint-initdb.d files
     xz-utils \
@@ -80,10 +81,7 @@ RUN mkdir /usr/local/mysql \
 
 # the "/var/lib/mysql" stuff here is because the mysql-server postinst doesn't have an explicit way to disable the mysql_install_db codepath besides having a database already "configured" (ie, stuff in /var/lib/mysql/mysql)
 # also, we set debconf keys to make APT a little quieter
-RUN apt-get update \
-    #&& apt install -y git bash-completion systemd make clang-format-9 pkg-config g++ autoconf libtool asciidoctor libkmod-dev libudev-dev uuid-dev libjson-c-dev libkeyutils-dev pandoc libhwloc-dev libgflags-dev libtext-diff-perl \
-    && apt-get install -y libhwloc-dev libpmem-dev librpmem-dev libpmemblk-dev libpmemlog-dev libpmemobj-dev libpmempool-dev libpmempool-dev\
-    && rm -rf /var/lib/apt/lists/* \
+RUN rm -rf /var/lib/apt/lists/* \
     && rm -rf /var/lib/mysql && mkdir -p /var/lib/mysql /var/run/mysqld \
     && chown -R mysql:mysql /var/lib/mysql /var/run/mysqld \
     # ensure that /var/run/mysqld (used for socket and lock files) is writable regardless of the UID our mysqld instance ends up having at runtime

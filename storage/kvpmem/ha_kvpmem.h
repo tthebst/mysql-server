@@ -33,15 +33,14 @@
 
 #include <sys/types.h>
 #include <iostream>
-#include "engine.hpp"
+
 #include "my_base.h" /* ha_rows */
 #include "my_compiler.h"
-#include "namespace.hpp"
 
+#include "engine.h"
 #include "my_inttypes.h"
 #include "sql/handler.h" /* handler */
 #include "thr_lock.h"    /* THR_LOCK, THR_LOCK_DATA */
-
 /** @brief
   KVpmem_share is a class that will be shared among all open handlers.
   This kvpmem implements the minimum of what you will probably need.
@@ -51,7 +50,6 @@ class KVpmem_share : public Handler_share {
   THR_LOCK lock;
   // read iterator shared across handler instantiations
 
-  std::vector<pmem::obj::string_view> subquery_stack;
   std::unordered_map<unsigned long, std::vector<std::string>>
       subquery_stack_map;
 
@@ -68,8 +66,7 @@ class ha_kvpmem : public handler {
   long active_idx;
   size_t kv_key_length;
 
-  std::unordered_map<std::string, std::shared_ptr<kvdk::Iterator>>
-      read_iterators;
+  std::unordered_map<std::string, KVDKIterator *> read_iterators;
   THR_LOCK_DATA lock;          ///< MySQL lock
   KVpmem_share *share;        ///< Shared lock info
   KVpmem_share *get_share();  ///< Get the share
