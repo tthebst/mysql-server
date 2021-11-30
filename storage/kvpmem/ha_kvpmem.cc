@@ -102,6 +102,7 @@
 #include "mysql/plugin.h"
 #include "namespace.hpp"
 
+#include "sql/field.h"
 #include "sql/sql_class.h"
 #include "sql/sql_plugin.h"
 #include "sql/table.h"
@@ -269,9 +270,8 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
       // details.
       // engine_configs.pmem_file_size = 4 * 1024UL * 1024UL * 1024UL;
       // engine_configs.pmem_segment_blocks = (1ull << 8);
-      engine_configs.pmem_file_size = 16 * 1024UL * 1024UL * 1024UL;
+      engine_configs.pmem_file_size = 64 * 1024UL * 1024UL * 1024UL;
       engine_configs.hash_bucket_num = (1ull << 10);
-      engine_configs.log_level = kvdk::LogLevel::All;
     }
     // The KVDK instance is mounted as a directory
     // /mnt/pmem0/tutorial_kvdk_example.
@@ -472,6 +472,19 @@ int ha_kvpmem::write_row(uchar *row) {
     key_str = create_primary_key(row, &table->key_info[table->s->primary_key]);
   }
 
+  // handle blob write field
+  uint *blob, *end;
+  for (blob = table->s->blob_field, end = blob + table->s->blob_fields;
+       blob != end; blob++) {
+    Field_blob *field = down_cast<Field_blob *>(table->field[*blob]);
+    const uint32 length = field->get_length();
+    DBUG_PRINT("KVDK", ("write_row handling BLOB length %d %s", length,
+                        field->get_blob_data()));
+    if (length) {
+      sv.append(reinterpret_cast<char *>(field->get_blob_data()), length);
+    }
+  }
+
   std::string test;
   // check uniqueness constraint. If already exists in table uniquenss is
   if (engine->SGet(active_table, key_str, &test) != kvdk::Status::NotFound) {
@@ -516,6 +529,19 @@ int ha_kvpmem::update_row(const uchar *old_row, uchar *new_row) {
 
   // prepare new row to be inserted
   std::string sv(reinterpret_cast<char *>(new_row), table->s->reclength);
+
+  // add blob to new row
+  uint *blob, *end;
+  for (blob = table->s->blob_field, end = blob + table->s->blob_fields;
+       blob != end; blob++) {
+    Field_blob *field = down_cast<Field_blob *>(table->field[*blob]);
+    const uint32 length = field->get_length();
+    DBUG_PRINT("KVDK", ("update_row handling BLOB length %d %s", length,
+                        field->get_blob_data()));
+    if (length) {
+      sv.append(reinterpret_cast<char *>(field->get_blob_data()), length);
+    }
+  }
 
   // handle case where no primary key specified. In that case a write iterator
   // is used to update row and index is read from mysql row passed by argument
@@ -679,6 +705,25 @@ int ha_kvpmem::index_read_map(uchar *ret, const uchar *key, key_part_map map,
 
     auto value = read_iterators[active_table]->Value();
     memcpy(ret, value.data(), table->s->reclength);
+
+    // handle blob write field
+    blobroot.ClearForReuse();
+    uint *blob, *end;
+    for (blob = table->s->blob_field, end = blob + table->s->blob_fields;
+         blob != end; blob++) {
+      Field_blob *field = down_cast<Field_blob *>(table->field[*blob]);
+      const uint32 length = value.size() - table->s->reclength;
+      DBUG_PRINT("KVDK", ("write_row handling BLOB length index %d", length));
+
+      if (length > 0) {
+        unsigned char *new_blob = new (&blobroot) unsigned char[length];
+        if (new_blob == nullptr) return HA_ERR_OUT_OF_MEM;
+        memcpy(new_blob, value.data() + table->s->reclength,
+               value.size() - table->s->reclength);
+        field->set_ptr(length, new_blob);
+      }
+    }
+
     return 0;
   }
 
@@ -695,6 +740,24 @@ int ha_kvpmem::index_read_map(uchar *ret, const uchar *key, key_part_map map,
     value = read_iterators[active_table]->Value();
 
     memcpy(ret, value.data(), table->s->reclength);
+
+    // handle blob field
+    blobroot.ClearForReuse();
+    uint *blob, *end;
+    for (blob = table->s->blob_field, end = blob + table->s->blob_fields;
+         blob != end; blob++) {
+      Field_blob *field = down_cast<Field_blob *>(table->field[*blob]);
+      const uint32 length = value.size() - table->s->reclength;
+      DBUG_PRINT("KVDK", ("write_row handling BLOB length index %d", length));
+
+      if (length > 0) {
+        unsigned char *new_blob = new (&blobroot) unsigned char[length];
+        if (new_blob == nullptr) return HA_ERR_OUT_OF_MEM;
+        memcpy(new_blob, value.data() + table->s->reclength,
+               value.size() - table->s->reclength);
+        field->set_ptr(length, new_blob);
+      }
+    }
   }
 
   return 0;
@@ -854,6 +917,25 @@ int ha_kvpmem::rnd_next(uchar *ret) {
 
     auto value = read_iterators[active_table]->Value();
     memcpy(ret, value.data(), table->s->reclength);
+
+    // handle blob field
+    blobroot.ClearForReuse();
+    uint *blob, *end;
+    for (blob = table->s->blob_field, end = blob + table->s->blob_fields;
+         blob != end; blob++) {
+      Field_blob *field = down_cast<Field_blob *>(table->field[*blob]);
+      const uint32 length = value.size() - table->s->reclength;
+      DBUG_PRINT("KVDK", ("write_row handling BLOB length %d", length));
+
+      if (length > 0) {
+        unsigned char *new_blob = new (&blobroot) unsigned char[length];
+        if (new_blob == nullptr) return HA_ERR_OUT_OF_MEM;
+        memcpy(new_blob, value.data() + table->s->reclength,
+               value.size() - table->s->reclength);
+        field->set_ptr(length, new_blob);
+      }
+    }
+
   } else {
     DBUG_PRINT("KVDK", ("rnd_next: no next"));
     return HA_ERR_END_OF_FILE;

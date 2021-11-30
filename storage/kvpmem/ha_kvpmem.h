@@ -73,6 +73,7 @@ class ha_kvpmem : public handler {
   THR_LOCK_DATA lock;          ///< MySQL lock
   KVpmem_share *share;        ///< Shared lock info
   KVpmem_share *get_share();  ///< Get the share
+  MEM_ROOT blobroot;
 
   /** Flags that specificy the handler instance (table) capability. */
   Table_flags m_int_table_flags;

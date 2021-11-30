@@ -39,3 +39,22 @@ docker run -it --network host --rm mysql bash -c 'mysql  --user=root --password=
 cmake .. -DCMAKE_INSTALL_PREFIX=/out -DCPACK_MONOLITHIC_INSTALL=1 -DWITH_BOOST=/usr/local -DWITH_KVPMEM_STORAGE_ENGINE=1 -DWITH_DEBUG=1
 
 docker build -t mysql-test . && docker rm $(docker stop $(docker ps -a -q --filter name=mysql8 --format="{{.ID}}")) && docker run --network host --cap-add=sys_nice -v $HOME/my-kvpmem.cnf:/etc/mysql/my.cnf -v /pmem:/pmem -e MYSQL_ROOT_PASSWORD=secret -e MYSQL_USER=mysql -e MYSQL_PASSWORD=secret --name mysql8 -d mysql-test mysqld --default-authentication-plugin=mysql_native_password  --debug=d,KVDK
+
+
+CREATE database t;
+use t;
+
+CREATE TABLE shopp (
+    article INT UNSIGNED  DEFAULT '0000' NOT NULL,
+    dealer  CHAR(20)      DEFAULT ''     NOT NULL,
+    price   TEXT,
+    PRIMARY KEY (article))
+    ENGINE = KVPMEM;
+
+INSERT INTO shopp VALUES (1,'A','MVADASDDSds'),(2,'A','sadfsssss');
+
+SELECT * FROM shopp;
+
+UPDATE shopp SET price='yolo' WHERE article=1;
+
+SELECT * FROM shopp;
