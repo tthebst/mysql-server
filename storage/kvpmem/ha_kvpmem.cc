@@ -101,6 +101,7 @@
 #include <memory>
 #include "my_dbug.h"
 #include "mysql/plugin.h"
+#include "sql/field.h"
 #include "sql/sql_class.h"
 #include "sql/sql_plugin.h"
 #include "sql/table.h"
@@ -283,7 +284,7 @@ static handler *kvpmem_create_handler(handlerton *hton, TABLE_SHARE *table,
     pmem::kv::status s = cfg.put_path(kvpmem_data_file_path);
     assert(s == pmem::kv::status::OK);
 
-    s = cfg.put_size(40 * 1024UL * 1024UL * 1024UL);
+    s = cfg.put_size(128 * 1024UL * 1024UL * 1024UL);
     assert(s == pmem::kv::status::OK);
     s = cfg.put_create_if_missing(true);
     assert(s == pmem::kv::status::OK);
@@ -532,8 +533,6 @@ int ha_kvpmem::write_row(uchar *row) {
   // support no primary key. If no primary key is specified a atomic variable is
   // used as an index. This atomic variable is shared across a table and is
   // increased on each insert
-  // auto t1 = std::chrono::high_resolution_clock::now();
-
   if (table->s->is_missing_primary_key()) {
     auto new_idx = share->index_count.fetch_add(1, std::memory_order_relaxed);
     key_str = active_table + "_" + std::bitset<64>(new_idx).to_string();
@@ -544,20 +543,17 @@ int ha_kvpmem::write_row(uchar *row) {
                                  &table->key_info[table->s->primary_key]);
   }
 
-  // auto t2 = std::chrono::high_resolution_clock::now();
-  // DBUG_PRINT(
-  //     "KVDK",
-  //     ("write_row  prepare %ld microseconds",
-  //      std::chrono::duration_cast<std::chrono::microseconds>(t2 -
-  //      t1).count()));
-
-  // t1 = std::chrono::high_resolution_clock::now();
-
-  if (active_table == "./test/customer") {
-    DBUG_PRINT("KVDK",
-               ("write_row %s duplicate %d %d", key_str.data(),
-                table->key_info[table->s->primary_key].user_defined_key_parts,
-                table->key_info[table->s->primary_key].key_length));
+  // handle blob write field
+  uint *blob, *end;
+  for (blob = table->s->blob_field, end = blob + table->s->blob_fields;
+       blob != end; blob++) {
+    Field_blob *field = down_cast<Field_blob *>(table->field[*blob]);
+    const uint32 length = field->get_length();
+    DBUG_PRINT("KVDK", ("write_row handling BLOB length %d %s", length,
+                        field->get_blob_data()));
+    if (length) {
+      sv.append(reinterpret_cast<char *>(field->get_blob_data()), length);
+    }
   }
 
   // check uniqueness constraint. If already exists in table uniquenss is
@@ -570,12 +566,6 @@ int ha_kvpmem::write_row(uchar *row) {
   pmem::kv::status s = kv->put(key_str, sv);
   ASSERT(s == pmem::kv::status::OK, s);
 
-  // t2 = std::chrono::high_resolution_clock::now();
-  // DBUG_PRINT(
-  //     "KVDK",
-  //     ("write_row  insert %ld microseconds",
-  //      std::chrono::duration_cast<std::chrono::microseconds>(t2 -
-  //      t1).count()));
   return 0;
 }
 
@@ -610,6 +600,20 @@ int ha_kvpmem::update_row(const uchar *old_row, uchar *new_row) {
   // prepare new row to be inserted
   std::string sv(reinterpret_cast<char *>(new_row), table->s->reclength);
   pmem::kv::status s;
+
+  // add blob to new row
+  uint *blob, *end;
+  for (blob = table->s->blob_field, end = blob + table->s->blob_fields;
+       blob != end; blob++) {
+    Field_blob *field = down_cast<Field_blob *>(table->field[*blob]);
+    const uint32 length = field->get_length();
+    DBUG_PRINT("KVDK", ("update_row handling BLOB length %d %s", length,
+                        field->get_blob_data()));
+    if (length) {
+      sv.append(reinterpret_cast<char *>(field->get_blob_data()), length);
+    }
+  }
+
   // handle case where no primary key specified. In that case a write iterator
   // is used to update row and index is read from mysql row passed by argument
   if (table->s->is_missing_primary_key()) {
@@ -900,6 +904,24 @@ int ha_kvpmem::index_read_map(uchar *ret, const uchar *key, key_part_map map,
     value = read_value(*read_it);
 
     memcpy(ret, value.data(), table->s->reclength);
+
+    // handle blob write field
+    blobroot.ClearForReuse();
+    uint *blob, *end;
+    for (blob = table->s->blob_field, end = blob + table->s->blob_fields;
+         blob != end; blob++) {
+      Field_blob *field = down_cast<Field_blob *>(table->field[*blob]);
+      const uint32 length = value.size() - table->s->reclength;
+      DBUG_PRINT("KVDK", ("write_row handling BLOB length index %d", length));
+
+      if (length > 0) {
+        unsigned char *new_blob = new (&blobroot) unsigned char[length];
+        if (new_blob == nullptr) return HA_ERR_OUT_OF_MEM;
+        memcpy(new_blob, value.data() + table->s->reclength,
+               value.size() - table->s->reclength);
+        field->set_ptr(length, new_blob);
+      }
+    }
   }
 
   return 0;
@@ -1121,6 +1143,24 @@ int ha_kvpmem::rnd_next(uchar *ret) {
 
     auto value = read_value(*read_it);
     memcpy(ret, value.data(), table->s->reclength);
+
+    // handle blob field
+    blobroot.ClearForReuse();
+    uint *blob, *end;
+    for (blob = table->s->blob_field, end = blob + table->s->blob_fields;
+         blob != end; blob++) {
+      Field_blob *field = down_cast<Field_blob *>(table->field[*blob]);
+      const uint32 length = value.size() - table->s->reclength;
+      DBUG_PRINT("KVDK", ("write_row handling BLOB length %d", length));
+
+      if (length > 0) {
+        unsigned char *new_blob = new (&blobroot) unsigned char[length];
+        if (new_blob == nullptr) return HA_ERR_OUT_OF_MEM;
+        memcpy(new_blob, value.data() + table->s->reclength,
+               value.size() - table->s->reclength);
+        field->set_ptr(length, new_blob);
+      }
+    }
   } else {
     DBUG_PRINT("KVDK", ("rnd_next: no next"));
     return HA_ERR_END_OF_FILE;
